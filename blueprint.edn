@@ -1,0 +1,11 @@
+[{:itonami.blueprint/id "cloud-itonami-isco-4313"
+  :itonami.blueprint/name "Community Payroll Service"
+  :itonami.blueprint/isco-08 "4313"
+  :itonami.blueprint/domain :finance/payroll
+  :itonami.blueprint/license "AGPL-3.0-or-later"
+  :itonami.blueprint/social-impact [:fair-pay :small-business-support :local-jobs]
+  :itonami.blueprint/governor :payroll-governor
+  :itonami.blueprint/robotics true
+  :itonami.blueprint/required-technologies [:robotics :identity :forms :dmn :bpmn :audit-ledger]
+  :itonami.blueprint/status :public-oss
+  :db/id -1}]
