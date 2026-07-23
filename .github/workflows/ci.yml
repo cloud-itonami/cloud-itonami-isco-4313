@@ -1,0 +1,39 @@
+name: CI
+
+# deps.edn pins langgraph via a real git coordinate (:git/sha), but
+# kotoba-lang/labor (this vertical's bespoke domain library) is
+# :local/root only -- the test job reconstructs the workspace layout for
+# it and its own transitive :local/root deps (html/css), which GitHub
+# Actions checkout does not follow automatically.
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with: { path: orgs/cloud-itonami/cloud-itonami-isco-4313 }
+      - uses: actions/checkout@v4
+        with:
+          repository: kotoba-lang/labor
+          path: orgs/kotoba-lang/labor
+      - uses: actions/checkout@v4
+        with:
+          repository: kotoba-lang/html
+          path: orgs/kotoba-lang/html
+      - uses: actions/checkout@v4
+        with:
+          repository: kotoba-lang/css
+          path: orgs/kotoba-lang/css
+      - uses: actions/setup-java@v4
+        with: { distribution: temurin, java-version: "21" }
+      - uses: DeLaGuardo/setup-clojure@13.4
+        with: { cli: latest }
+      - name: test
+        working-directory: orgs/cloud-itonami/cloud-itonami-isco-4313
+        run: clojure -M:test

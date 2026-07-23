@@ -8,4 +8,5 @@
   :itonami.blueprint/robotics true
   :itonami.blueprint/required-technologies [:robotics :identity :forms :dmn :bpmn :audit-ledger]
   :itonami.blueprint/status :public-oss
+  :itonami.blueprint/maturity :implemented
   :db/id -1}]
