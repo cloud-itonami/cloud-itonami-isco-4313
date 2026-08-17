@@ -10,9 +10,22 @@
 
   Domain:
 
-    client     — a registered employer (:client-id, :name)
+    client     — a registered employer (:client-id, :name, and optionally
+                 :jurisdiction — a `kotoba.taxlaw` path such as [:jp]).
+                 Declaring a jurisdiction is what puts the run under the
+                 governor's withholding rules; an employer that declares
+                 none is not held, and the verdict's :extra says so.
     contract   — a `kotoba.labor/contract` record, registered under its
                  :contract/id. Every payroll-run draft MUST cite one.
+                 May additionally carry the facts 所得税法 第百八十三条第一項
+                 turns on, which are the OPERATOR's to register and not the
+                 advisor's to propose:
+                   :employment/recipient-residency  :resident|:non-resident
+                   :employment/paid-in              :domestic|:overseas
+                   :employment/payment-kind         defaults to
+                                                    :employment-income
+                 Unstated is not the article's exclusion — taxlaw treats a
+                 missing residency as in scope, not as exempt.
     timesheet  — `kotoba.labor/timesheet` entries registered per worker;
                  the ONLY admissible basis for hourly wage computation
                  (no invented hours).

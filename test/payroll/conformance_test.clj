@@ -20,8 +20,25 @@
   (let [st (store/mem-store)]
     (store/register-client! st {:client-id "emp-1" :name "Hanako's Bakery"})
     (store/register-client! st {:client-id "emp-2" :name "Taro's Garage"})
+    ;; two employers that DECLARE where they pay wages — the asserted
+    ;; condition the withholding rules fire on. emp-1 / emp-2 declare none,
+    ;; which is itself a case worth pinning.
+    (store/register-client! st {:client-id "emp-jp" :name "Studio Kotoba"
+                                :jurisdiction [:jp]})
+    (store/register-client! st {:client-id "emp-atl" :name "Atlantis Co"
+                                :jurisdiction [:atlantis]})
     (store/register-contract! st (labor/contract "c-1" "worker-1" "emp-1" "baker" :hourly 2000))
     (store/register-contract! st (labor/contract "c-2" "worker-2" "emp-2" "mechanic" :hourly 2500))
+    (store/register-contract!
+     st (merge (labor/contract "c-jp" "worker-1" "emp-jp" "baker" :hourly 2000)
+               {:employment/recipient-residency :resident
+                :employment/paid-in :domestic}))
+    (store/register-contract!
+     st (merge (labor/contract "c-jp-nr" "worker-1" "emp-jp" "baker" :hourly 2000)
+               {:employment/recipient-residency :non-resident
+                :employment/paid-in :overseas}))
+    (store/register-contract!
+     st (labor/contract "c-atl" "worker-1" "emp-atl" "baker" :hourly 2000))
     (store/register-timesheet! st (labor/timesheet "worker-1" "2026-07-01" 8))
     (store/register-timesheet! st (labor/timesheet "worker-1" "2026-07-02" 6))
     st))
@@ -66,7 +83,25 @@
    ;; a proposal that does not say how confident it is has not said it is
    ;; confident — the absent key must read as 0.0, never as trustworthy.
    {:name :escalate/no-confidence-key :request {:client-id "emp-1"}
-    :proposal {:op :review :effect :propose}}])
+    :proposal {:op :review :effect :propose}}
+
+   ;; --- 源泉徴収 (所得税法 第百八十三条第一項) --------------------------------
+   {:name :hard/income-tax-not-withheld :request {:client-id "emp-jp"}
+    :proposal (assoc clean :contract-id "c-jp")}
+
+   {:name :hard/unchecked-jurisdiction :request {:client-id "emp-atl"}
+    :proposal (assoc clean :contract-id "c-atl")}
+
+   ;; the two cases the governor deliberately does NOT hold. They belong in
+   ;; the conformance set precisely because they are passes: a verdict that
+   ;; passes for a reason must still be a well-formed verdict, and
+   ;; `every-non-hold-tax-case-says-what-was-not-checked` below pins that the
+   ;; reason is on it.
+   {:name :ok/withholding-accounted-for :request {:client-id "emp-jp"}
+    :proposal (assoc clean :contract-id "c-jp" :income-tax-withheld 8420)}
+
+   {:name :ok/outside-the-read-article :request {:client-id "emp-jp"}
+    :proposal (assoc clean :contract-id "c-jp-nr")}])
 
 (defn- verdict-for [{:keys [request proposal]}]
   (governor/check request {} proposal (fresh-store)))
@@ -92,9 +127,34 @@
   ;; evidence floor: a conformance suite whose cases all landed in one
   ;; disposition would pass while checking almost nothing.
   (let [vs (map verdict-for cases)]
-    (is (>= (count (filter :ok? vs)) 1) "no clean case")
-    (is (>= (count (filter :hard? vs)) 7) "HARD rules under-covered")
+    (is (>= (count (filter :ok? vs)) 3) "no clean case")
+    (is (>= (count (filter :hard? vs)) 9) "HARD rules under-covered")
     (is (>= (count (filter :escalate? vs)) 3) "escalation under-covered")))
+
+(deftest every-non-hold-tax-case-says-what-was-not-checked
+  ;; The device that keeps `nobody looked` from printing the same verdict as
+  ;; `we looked and it was fine`. Three of these cases pass for three
+  ;; DIFFERENT reasons — no jurisdiction declared, the payment is outside the
+  ;; one article that was read, and the withholding is accounted for — and a
+  ;; reader must be able to tell which.
+  (let [coverage (fn [client contract-id & {:as extra}]
+                   (get-in (verdict-for
+                            {:request {:client-id client}
+                             :proposal (merge (assoc clean :contract-id contract-id)
+                                              extra)})
+                           [:tax :withholding :taxlaw/coverage]))]
+    (is (= :not-declared (coverage "emp-1" "c-1"))
+        "emp-1 declares no jurisdiction, so no withholding law was consulted")
+    (is (= :out-of-scope (coverage "emp-jp" "c-jp-nr"))
+        "declared outside 所得税法 第百八十三条第一項")
+    (is (= :checked (coverage "emp-jp" "c-jp" :income-tax-withheld 8420))
+        "consulted and satisfied")
+    (testing "and every draft verdict records that 年末調整 was not evaluated"
+      (doseq [[client cid] [["emp-1" "c-1"] ["emp-jp" "c-jp"]]]
+        (is (= :not-evaluated
+               (get-in (verdict-for {:request {:client-id client}
+                                     :proposal (assoc clean :contract-id cid)})
+                       [:tax :year-end-adjustment :taxlaw/coverage])))))))
 
 (deftest escalation-carries-a-reason
   (doseq [{:keys [name] :as c} cases
