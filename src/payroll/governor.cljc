@@ -21,9 +21,34 @@
                               approve their way past a wage mismatch.
   ESCALATION invariants (:escalate? true, human sign-off):
     5. :op :disburse-wages  (real fund movement — always human).
-    6. low confidence (< `confidence-floor`)."
+    6. low confidence (< `confidence-floor`).
+
+  ## What is this actor's, and what is the fleet's
+
+  Rules 1, 2, the registered-contract half of 3, and the verdict assembly
+  are not payroll rules — every actor in this fleet has them, and they were
+  hand-copied into 376 governors, one of which silently drifted into
+  reporting a HARD violation as escalatable. They now come from
+  `kotoba-lang/governor`:
+
+    :no-client               gov/missing-subject
+    :no-actuation            gov/no-actuation
+    :unknown-contract        gov/unknown-scope
+    :contract-wrong-employer gov/scope-owner-mismatch  (see below)
+
+  `:contract-wrong-employer` is why that library grew a `:scope-key`. A
+  `kotoba.labor` contract carries ownership as `:contract/employer`; the
+  request carries `:client-id`. The shared rule previously read one key off
+  both sides, so this actor could not use it and hand-rolled the comparison
+  — which is the mechanism that produced the 376 copies. Generalising the
+  library was the correct fix; copying the rule a 377th time was not.
+
+  What stays here is payroll: that a run cites a contract at all, that the
+  contract is valid per `kotoba.labor/validate-contract`, and the two
+  arithmetic identities the governor recomputes rather than trusts."
   (:require [kotoba.labor :as labor]
-            [payroll.store :as store]))
+            [payroll.store :as store]
+            [governor.core :as gov]))
 
 (def confidence-floor 0.6)
 (def ^:private escalating-ops #{:disburse-wages})
@@ -32,22 +57,28 @@
   (let [{:keys [op contract-id gross deductions net]} proposal
         draft? (= :draft-payroll-run op)
         validation (when contract-record (labor/validate-contract contract-record))]
-    (cond-> []
-      (nil? client-record)
-      (conj {:rule :no-client :detail "未登録 employer"})
+    (gov/violations
+     ;; --- the fleet's, from kotoba-lang/governor -------------------------
+     (gov/missing-subject client-record {:detail "未登録 employer"})
+     (gov/no-actuation proposal
+                       {:detail "effect は :propose のみ許可（直接書込禁止）"})
+     ;; citing no contract and citing one that does not exist are different
+     ;; failures; only the second is unknown-scope.
+     (gov/unknown-scope contract-record
+                        {:applies? (boolean (and draft? contract-id))
+                         :rule :unknown-contract
+                         :detail (str "未登録の契約: " contract-id)})
+     (when draft?
+       (gov/scope-owner-mismatch contract-record request
+                                 {:owner-key :client-id
+                                  :scope-key :contract/employer
+                                  :rule :contract-wrong-employer
+                                  :detail "契約が別 employer のもの"}))
 
-      (not= :propose (:effect proposal))
-      (conj {:rule :no-actuation :detail "effect は :propose のみ許可（直接書込禁止）"})
-
+     ;; --- payroll's own ---------------------------------------------------
+     (cond-> []
       (and draft? (nil? contract-id))
       (conj {:rule :no-contract :detail "payroll run は雇用契約の引用が必須（雇用の捏造禁止）"})
-
-      (and draft? contract-id (nil? contract-record))
-      (conj {:rule :unknown-contract :detail (str "未登録の契約: " contract-id)})
-
-      (and draft? contract-record
-           (not= (:contract/employer contract-record) (:client-id request)))
-      (conj {:rule :contract-wrong-employer :detail "契約が別 employer のもの"})
 
       (and draft? contract-record validation (not (:labor/valid? validation)))
       (conj {:rule :invalid-contract :detail (str "契約が不正: " (:labor/error validation))})
@@ -63,7 +94,7 @@
 
       (and draft? gross net (not= net (- gross (or deductions 0))))
       (conj {:rule :net-mismatch
-             :detail (str "net " net " ≠ gross − deductions = " (- gross (or deductions 0)))}))))
+             :detail (str "net " net " ≠ gross − deductions = " (- gross (or deductions 0)))})))))
 
 (defn check
   "Assess a proposal against `request`/`context`/`proposal` and a
@@ -75,12 +106,8 @@
         contract-record (some->> (:contract-id proposal) (store/contract-of store))
         hard (hard-violations {:request request :proposal proposal}
                               client-record contract-record store)
-        hard? (boolean (seq hard))
-        conf (or (:confidence proposal) 0.0)
-        low? (< conf confidence-floor)
-        risky-op? (contains? escalating-ops (:op proposal))]
-    {:ok? (and (not hard?) (not low?) (not risky-op?))
-     :violations hard
-     :confidence conf
-     :hard? hard?
-     :escalate? (and (not hard?) (or low? risky-op?))}))
+        ]
+    (gov/verdict {:violations hard
+                  :confidence (:confidence proposal)
+                  :escalating-op? (contains? escalating-ops (:op proposal))
+                  :confidence-floor confidence-floor})))
