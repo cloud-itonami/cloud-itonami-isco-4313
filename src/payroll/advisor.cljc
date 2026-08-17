@@ -13,9 +13,18 @@
      :contract-id str-or-nil
      :period str
      :gross n :deductions n :net n
+     :income-tax-withheld n-or-nil
      :stake :low|:medium|:high
      :confidence 0.0-1.0
-     :rationale str}"
+     :rationale str}
+
+  `:income-tax-withheld` is carried through from the request, never
+  computed. The advisor does not know the tax tables and neither does the
+  governor — `kotoba.taxlaw` read 所得税法 第百八十三条第一項 but not
+  別表第二 / 別表第五, so what is gated is that the run ACCOUNTS for withheld
+  income tax, not that the amount is right. An advisor that invented a
+  plausible figure here would be inventing exactly the thing nothing
+  downstream can check."
   (:require [kotoba.labor :as labor]
             [payroll.store :as store]
             #?(:clj [clojure.edn :as edn] :cljs [cljs.reader :as edn])))
@@ -28,7 +37,8 @@
   advisor computes gross via kotoba.labor from the registered contract
   and timesheets (an LLM advisor would do the same tool-call); the
   governor recomputes independently either way."
-  [store {:keys [op stake contract-id period deductions] :as request}]
+  [store {:keys [op stake contract-id period deductions income-tax-withheld]
+          :as request}]
   (let [base {:op op
               :effect :propose
               :stake (or stake :low)
@@ -43,6 +53,9 @@
                :period period
                :gross gross
                :deductions ded
+               ;; carried through, not invented — nil when the request did
+               ;; not say, which is the case the governor holds.
+               :income-tax-withheld income-tax-withheld
                :net (when gross (- gross ded))))
       base)))
 

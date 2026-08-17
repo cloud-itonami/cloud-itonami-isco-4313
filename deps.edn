@@ -23,7 +23,17 @@
         ;; :contract/employer while the request names it :client-id.
         io.github.kotoba-lang/governor
         {:git/url "https://github.com/kotoba-lang/governor.git"
-         :git/sha "90a2944e617e58b9c90314b7e84b003ec3ea0c1f"}}
+         :git/sha "90a2944e617e58b9c90314b7e84b003ec3ea0c1f"}
+        ;; what a tax record must carry, by jurisdiction. a4a68050 is the
+        ;; commit that added the withholding facet, because this actor is the
+        ;; first payer-side consumer: 4311 checks the RECEIVING side of
+        ;; インボイス制度 and `tehai` the ISSUING side. The 源泉徴収 rule was
+        ;; read out of 所得税法 第百八十三条第一項 before it was enforced --
+        ;; taxlaw's standing rule -- and it lives there rather than here
+        ;; because a second actor will need the same law.
+        io.github.kotoba-lang/taxlaw
+        {:git/url "https://github.com/kotoba-lang/taxlaw.git"
+         :git/sha "a4a68050e30622dd92990dcdab94038a07d46998"}}
  :aliases
  {
   ;; clj-kondo from deps (no binary), errors fail CI. Added because this repo

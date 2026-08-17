@@ -37,6 +37,50 @@
       (is (empty? (store/records-of st "emp-1")))
       (is (= :hold (:disposition (:state result)))))))
 
+(defn- jp-store
+  "An employer that declares [:jp] and a contract carrying the facts
+  所得税法 第百八十三条第一項 turns on."
+  []
+  (let [st (store/mem-store)]
+    (store/register-client! st {:client-id "emp-jp" :name "Studio Kotoba"
+                                :jurisdiction [:jp]})
+    (store/register-contract!
+     st (merge (labor/contract "c-jp" "worker-1" "emp-jp" "baker" :hourly 2000)
+               {:employment/recipient-residency :resident
+                :employment/paid-in :domestic}))
+    (store/register-timesheet! st (labor/timesheet "worker-1" "2026-07-01" 8))
+    (store/register-timesheet! st (labor/timesheet "worker-1" "2026-07-02" 6))
+    st))
+
+(deftest holds-a-jp-run-that-does-not-account-for-withheld-income-tax
+  (testing "end to end: the graph must not write a payroll record for a
+            payment of 給与等 with no withholding accounted for"
+    (let [st (jp-store)
+          graph (actor/build-graph {:store st})
+          request {:client-id "emp-jp" :op :draft-payroll-run :stake :low
+                   :contract-id "c-jp" :period "2026-07" :deductions 3000}
+          result (actor/run-request! graph request {} "thread-jp-1")]
+      (is (= :done (:status result)))
+      (is (= :hold (:disposition (:state result))))
+      (is (nil? (get-in result [:state :record])))
+      (is (empty? (store/records-of st "emp-jp")))
+      (is (some #(= :income-tax-not-withheld (:rule %))
+                (get-in result [:state :verdict :violations]))))))
+
+(deftest commits-the-same-run-once-the-withholding-is-accounted-for
+  (let [st (jp-store)
+        graph (actor/build-graph {:store st})
+        request {:client-id "emp-jp" :op :draft-payroll-run :stake :low
+                 :contract-id "c-jp" :period "2026-07" :deductions 3000
+                 :income-tax-withheld 8420}
+        result (actor/run-request! graph request {} "thread-jp-2")]
+    (is (= :done (:status result)))
+    (is (= 28000 (get-in result [:state :record :payload :gross])))
+    (is (= 8420 (get-in result [:state :record :payload :income-tax-withheld]))
+        "the committed record carries the withheld amount, so the ledger can
+         later be asked what was withheld and when")
+    (is (= 1 (count (store/records-of st "emp-jp"))))))
+
 (deftest interrupts-then-commits-disbursement-on-human-approval
   (let [st (fresh-store)
         graph (actor/build-graph {:store st})
