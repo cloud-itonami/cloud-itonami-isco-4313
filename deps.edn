@@ -2,13 +2,21 @@
  :deps {io.github.kotoba-lang/langgraph
         {:git/sha "5b4e5e70837b849b14b6a5800894e3be202ad5fa"}
         ;; kotoba-lang/labor is this vertical's bespoke domain capability
-        ;; library (contracts, timesheets, wages, payroll). Referenced by
-        ;; workspace-sibling path per the fleet's capability-library-
-        ;; wrapping convention (same as cloud-itonami-isic-9700) — labor's
-        ;; own deps use sibling paths, so it is not consumable as a git
-        ;; dep; forks need the kotoba-lang workspace layout.
+        ;; library (contracts, timesheets, wages, payroll).
+        ;;
+        ;; This was a sibling path, on the stated grounds that "labor's own
+        ;; deps use sibling paths, so it is not consumable as a git dep".
+        ;; Measured 2026-08-17: labor has ZERO :local/root deps -- it takes
+        ;; html and css by git sha. The comment was false, and it was the
+        ;; reason nobody converted this: a claim about ANOTHER repo, written
+        ;; here, that nothing ever rechecked.
+        ;;
+        ;; The sibling path made this repo's README claim ("forkable by any
+        ;; qualified operator") quietly untrue, and made it ungateable on the
+        ;; murakumo fleet, which ships one repo's tree and no siblings.
         io.github.kotoba-lang/labor
-        {:local/root "../../kotoba-lang/labor"}
+        {:git/url "https://github.com/kotoba-lang/labor.git"
+         :git/sha "febdf680a038995228b7a85838ca3b73b9cada39"}
         ;; the itonami actor pattern's governor layer, written once.
         ;; 90a2944e is the commit that gave scope-owner-mismatch a
         ;; :scope-key, because this actor's contract names ownership
