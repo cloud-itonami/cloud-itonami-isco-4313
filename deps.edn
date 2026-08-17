@@ -8,7 +8,14 @@
         ;; own deps use sibling paths, so it is not consumable as a git
         ;; dep; forks need the kotoba-lang workspace layout.
         io.github.kotoba-lang/labor
-        {:local/root "../../kotoba-lang/labor"}}
+        {:local/root "../../kotoba-lang/labor"}
+        ;; the itonami actor pattern's governor layer, written once.
+        ;; 90a2944e is the commit that gave scope-owner-mismatch a
+        ;; :scope-key, because this actor's contract names ownership
+        ;; :contract/employer while the request names it :client-id.
+        io.github.kotoba-lang/governor
+        {:git/url "https://github.com/kotoba-lang/governor.git"
+         :git/sha "90a2944e617e58b9c90314b7e84b003ec3ea0c1f"}}
  :aliases
  {
   ;; clj-kondo from deps (no binary), errors fail CI. Added because this repo
