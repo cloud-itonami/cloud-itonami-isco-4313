@@ -29,9 +29,28 @@
                               not account for withheld income tax is HELD.
                               A missing amount is not a zero-tax run; it is
                               an unanswered question.
+  HARD invariants for :assess-year-end-adjustment ONLY (see 年末調整 below):
+    7. assessment basis     — the request must name a REGISTERED contract of
+                              this employer, and a year.
+    8. declared jurisdiction — an assessment for an employer that declares no
+                              jurisdiction is HELD. Unlike rule 5's scoping,
+                              here the question ASKED is a question of law,
+                              and it cannot be answered without one.
+    9. checked jurisdiction — a jurisdiction whose 年末調整 facet
+                              `kotoba.taxlaw` has not read is HELD, with the
+                              catalog's own reason. Not read is not absent.
+   10. observed declaration — 給与所得者の扶養控除等申告書 is a piece of paper
+                              software cannot see. Unregistered is HELD, and
+                              is its own answer — never a pass.
+   11. declared final payment — 「その年最後に給与等の支払をする場合」 is a
+                              condition about a payment that may not have
+                              happened. Unstated is HELD; stated FALSE is a
+                              different answer (`:year-not-finished`) that
+                              commits, because `not yet` is not `never`.
+
   ESCALATION invariants (:escalate? true, human sign-off):
-    7. :op :disburse-wages  (real fund movement — always human).
-    8. low confidence (< `confidence-floor`).
+   12. :op :disburse-wages  (real fund movement — always human).
+   13. low confidence (< `confidence-floor`).
 
   ## What is this actor's, and what is the fleet's
 
@@ -89,13 +108,44 @@
       every result it returns says `:taxlaw/amount-checked? false`. This
       governor holds a run that does not account for withholding at all; it
       does not certify one that does.
-    - check 年末調整 (所得税法 第百九十条). taxlaw has read and catalogued it,
-      but this actor has no year-end op and a payroll-run draft asserts
-      nothing about the year's final payment. `:extra` records that this was
-      not evaluated, and why — an unevaluated rule that leaves no trace is
-      indistinguishable from a satisfied one."
+    - check 年末調整 (所得税法 第百九十条) **on a payroll-run draft**. A draft
+      asserts nothing about the year's final payment, so `:extra` still
+      records that this was not evaluated, and why — an unevaluated rule that
+      leaves no trace is indistinguishable from a satisfied one. That record
+      is unchanged. What is new is a SEPARATE op that evaluates it.
+
+  ## 年末調整 (rules 7-11) — a question asked, not a run checked
+
+  所得税法 第百九十条 was read from source and catalogued in `kotoba.taxlaw`
+  alongside 第百八十三条第一項, and until `:assess-year-end-adjustment` existed
+  **nothing in this workspace called it**. The law is still not this actor's;
+  the reading of it is `payroll.nenmatsu`'s, which is pure and holds the whole
+  nine-valued answer. This governor turns four of those nine answers — the
+  four that are the ABSENCE of an answer — into HARD violations.
+
+  Two differences from the withholding rules are deliberate:
+
+  - **Rule 8 holds where rule 5 passes.** A draft run for an employer that
+    declares no jurisdiction is not held, because the run asserted nothing.
+    An assessment ASKS whether a year-end adjustment is owed, and that
+    question has no answer without a jurisdiction; returning one anyway would
+    be answering a legal question by not consulting any law.
+  - **No amount is checked or produced.** 第百九十条 applies the excess
+    against, and collects the shortfall with, the year's final payment, but
+    the year's correct tax comes from 別表 (税額表), which taxlaw records as
+    unread. This governor gates observability, never arithmetic — the same
+    line rule 6 holds, for the same reason.
+
+  The three condition facts are read from where an operator put them, never
+  from the proposal: the 申告書 off the REGISTERED contract, the final-payment
+  and settled declarations off the REQUEST. The contract itself is named by
+  the REQUEST for this op and not by the proposal, because an assessment has
+  no arithmetic for the governor to recompute — nothing the advisor writes is
+  load-bearing — and an advisor that could name the contract would be the
+  thing deciding whose 年末調整 gets looked at."
   (:require [kotoba.labor :as labor]
             [kotoba.taxlaw :as taxlaw]
+            [payroll.nenmatsu :as nenmatsu]
             [payroll.store :as store]
             [governor.core :as gov]))
 
@@ -213,6 +263,65 @@
                           (pr-str (:income-tax-withheld proposal))
                           "（納付期限 " (:taxlaw/remittance-deadline withholding) "）")})))))
 
+(def assessment-op
+  "The op that evaluates 所得税法 第百九十条. Named once so the edge, the
+  advisor's carry-through test and this namespace cannot drift apart on a
+  keyword literal."
+  :assess-year-end-adjustment)
+
+(def refusal-rules
+  "Which HARD rule each `payroll.nenmatsu` refusal becomes.
+
+  Driven off `nenmatsu/refusals` rather than off a `cond` here: a refusal
+  that namespace adds and this map has not classified is caught by
+  `payroll.governor-test/every-nenmatsu-refusal-has-a-hard-rule` instead of
+  silently committing. Adding an answer must not widen a pass."
+  {:jurisdiction-not-declared :year-end-jurisdiction-not-declared
+   :not-catalogued :unchecked-year-end-jurisdiction
+   :declaration-not-observed :year-end-declaration-not-observed
+   :final-payment-not-declared :final-payment-not-declared})
+
+(defn- assessment-violations
+  "The HARD rules that apply only to `assessment-op`.
+
+  `contract-record` here is looked up from the REQUEST's contract id, not the
+  proposal's — see the ns docstring. The two shared rules are the fleet's
+  (`kotoba-lang/governor`) and are the same two the draft path uses; what is
+  payroll's is that an assessment must name a contract and a year at all, and
+  that each of `payroll.nenmatsu`'s four refusals is a hold."
+  [request contract-record assessment]
+  (let [answer (:nenmatsu/answer assessment)]
+    (gov/violations
+     (gov/unknown-scope contract-record
+                        {:applies? (boolean (:contract-id request))
+                         :rule :unknown-contract
+                         :detail (str "未登録の契約: " (:contract-id request))})
+     (gov/scope-owner-mismatch contract-record request
+                               {:owner-key :client-id
+                                :scope-key :contract/employer
+                                :rule :contract-wrong-employer
+                                :detail "契約が別 employer のもの"})
+     (cond-> []
+       (not (nenmatsu/named? (:contract-id request)))
+       (conj {:rule :no-assessment-contract
+              :detail (str "年末調整の評価は雇用契約の引用が必須"
+                           "（誰の年末調整かを名指しできない評価は記録ではない）")})
+
+       (not (nenmatsu/named? (:year request)))
+       (conj {:rule :no-assessment-year
+              :detail (str "年末調整の評価は対象年の指定が必須"
+                           "（後から引ける識別子をこの actor は捏造しない）")})
+
+       (contains? nenmatsu/refusals answer)
+       (conj (cond-> {:rule (get refusal-rules answer :unclassified-year-end-refusal)
+                      :nenmatsu/answer answer
+                      :detail (str (name answer) ": " (:nenmatsu/why assessment))}
+               ;; which facet the catalog is missing, forwarded exactly as
+               ;; rule 5 forwards it for withholding.
+               (= :not-catalogued answer)
+               (assoc :taxlaw/out-of-scope
+                      (:taxlaw/out-of-scope (:nenmatsu/taxlaw assessment)))))))))
+
 (defn check
   "Assess a proposal against `request`/`context`/`proposal` and a
   `store` implementing `payroll.store/Store`. Pure — never mutates the
@@ -224,7 +333,23 @@
         hard (hard-violations {:request request :proposal proposal}
                               client-record contract-record store)
         draft? (= :draft-payroll-run (:op proposal))
-        juris (:jurisdiction client-record)]
+        assess? (= assessment-op (:op proposal))
+        juris (:jurisdiction client-record)
+        ;; The assessment's contract is the REQUEST's. The proposal cannot
+        ;; redirect an assessment at another employee.
+        assess-contract (when assess?
+                          (some->> (:contract-id request)
+                                   (store/contract-of store)))
+        assessment (when assess?
+                     (nenmatsu/assess
+                      {:jurisdiction juris
+                       :contract assess-contract
+                       :year (:year request)
+                       :request request
+                       :records (store/records-of store (:client-id request))}))
+        hard (if assess?
+               (into hard (assessment-violations request assess-contract assessment))
+               hard)]
     (gov/verdict
      {:violations hard
       :confidence (:confidence proposal)
@@ -236,7 +361,8 @@
       ;; and satisfied. Same device as 4311's `:tax`, kintai's `:unevaluated`
       ;; and tehai's `:tax`.
       :extra
-      (when draft?
+      (cond
+        draft?
         {:tax
          {:jurisdiction juris
           :withholding
@@ -248,14 +374,21 @@
                               "どこで支払われる給与かが宣言されていないので、"
                               "源泉徴収の法令は一切参照していない"
                               "（適用なしの判断ではない）")})
-          ;; 所得税法 第百九十条 is read and catalogued in kotoba.taxlaw, and
-          ;; nothing here consumes it. Recorded rather than omitted: a rule
-          ;; that exists upstream and is silently never called looks exactly
-          ;; like a rule that was called and passed.
+          ;; 所得税法 第百九十条 is NOT evaluated on a draft run, and the
+          ;; verdict says so rather than omitting it: a rule that is silently
+          ;; never called looks exactly like a rule that was called and
+          ;; passed. The sentence changed on 2026-08-18 — it used to say this
+          ;; actor had no year-end op, which stopped being true when
+          ;; `:assess-year-end-adjustment` landed. The COVERAGE did not
+          ;; change: a payroll-run draft still asserts nothing about the
+          ;; year's final payment, so there is still nothing here to evaluate.
           :year-end-adjustment
           {:taxlaw/coverage :not-evaluated
-           :taxlaw/why (str "この actor に年末調整の op が無く、"
-                            ":draft-payroll-run はその年最後の給与等の支払か"
-                            "どうかを何も主張しない。所得税法 第百九十条 は"
-                            "kotoba.taxlaw に読み込み済みだが、ここでは"
-                            "呼んでいない")}}})})))
+           :taxlaw/evaluated-by assessment-op
+           :taxlaw/why (str ":draft-payroll-run はその年最後の給与等の支払か"
+                            "どうかを何も主張しないので、所得税法 第百九十条 は"
+                            "この verdict では評価していない。評価する op は"
+                            "別にある（:assess-year-end-adjustment）")}}}
+
+        assess?
+        {:nenmatsu assessment})})))

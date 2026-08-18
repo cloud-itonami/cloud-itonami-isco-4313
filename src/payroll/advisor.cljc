@@ -9,6 +9,7 @@
 
   A proposal is a map:
     {:op :draft-payroll-run|:reconcile-timesheets|:disburse-wages
+         |:assess-year-end-adjustment
      :effect :propose
      :contract-id str-or-nil
      :period str
@@ -24,7 +25,18 @@
   別表第二 / 別表第五, so what is gated is that the run ACCOUNTS for withheld
   income tax, not that the amount is right. An advisor that invented a
   plausible figure here would be inventing exactly the thing nothing
-  downstream can check."
+  downstream can check.
+
+  ## `:assess-year-end-adjustment` carries nothing at all
+
+  The advisor produces only the base proposal for that op — no contract, no
+  year, none of the three facts 所得税法 第百九十条 turns on. Those are read
+  by `payroll.governor` off the REGISTERED contract and off the REQUEST,
+  never off the proposal, so an advisor cannot choose whose 年末調整 is looked
+  at nor whether the 申告書 was filed. This is not an omission to be filled in
+  later: `payroll.governor-test/an-advisor-cannot-move-the-year-end-answer`
+  pins that an advisor emitting all of those keys changes the answer by
+  nothing."
   (:require [kotoba.labor :as labor]
             [payroll.store :as store]
             #?(:clj [clojure.edn :as edn] :cljs [cljs.reader :as edn])))
