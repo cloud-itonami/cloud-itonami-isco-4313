@@ -12,7 +12,7 @@ cloud-itonami-isco-4311's bookkeeping actor. **Consumes
 `kotoba-lang/labor`** (contracts / timesheets / wages / payroll) per
 the fleet's capability-library-wrapping convention (same as
 cloud-itonami-isic-9700) — wage arithmetic is never reinvented here.
-33 tests / 135 assertions green.
+83 tests / 408 assertions green.
 
 The payroll-specific HARD invariant: **the governor recomputes wages
 deterministically via `kotoba.labor/wages-for` from the REGISTERED
@@ -114,6 +114,97 @@ was called and passed.
 
 Eight mutations measured; all eight redden, each in the tests that name the
 thing broken.
+
+## Two backends, and a contract test that cannot degrade to one
+
+`MemStore` keeps the payroll ledger for exactly as long as the process lives.
+A payroll actor whose record of what it refused disappears on restart cannot
+answer the one question anybody asks it later — why was this run not paid — and
+a committed run that is then forgotten is a run that can be committed twice,
+which the second time is a second payment. So there is a **`DatomicStore` over
+`langchain.db`**, built on
+[`kotoba-lang/langchain-store`](https://github.com/kotoba-lang/langchain-store)
+(EDN-blob codec, identity schema, seq-keyed streams — not re-hand-rolled here),
+and `test/payroll/store_contract_test.clj` runs **every** assertion against both
+out of one `backends` map, with an evidence floor asserting that map still holds
+two distinct types. A contract test that silently degrades to one backend passes
+forever.
+
+Three streams are seq-keyed and append-only, not two. **Timesheets are the
+third**, and they are the one the siblings do not have: they are the only
+admissible basis for an hourly wage, so a backend that lost one would not raise
+anything — it would compute a different lawful-looking wage, and the governor
+would then hold the *honest* proposal for `:wage-mismatch`.
+
+**Measured 2026-08-18.** Three mutations break the durable backend ALONE:
+
+| broken | reddens |
+|---|---|
+| `timesheets-of` stops scoping to the worker | 3 tests (2 in the contract test) |
+| the contract loses `:employment/paid-in` on write | 2 tests, **both in the contract test** |
+| `next-seq` always returns 0, so the logs upsert onto one entry | 11 tests |
+
+In each case the 33 pre-existing tests stay green, which is exactly the state
+the contract test exists to end.
+
+## The HTTP surface — three routes
+
+`src/payroll/edge/endpoints.cljc`, portable `.cljc`, `{:status n :body {...}}`
+in and out, no host effects and no framework.
+
+```
+POST /api/payroll-run               draft a payroll run
+GET  /api/payroll-run/:contract-id  the whole life of one contract's runs
+GET  /api/ledger                    the caller's own slice of the ledger
+```
+
+**`:disburse-wages` has no HTTP representation and will not get one.** It is in
+`escalating-ops`, so it always escalates and can only complete when a person
+resumes the thread — putting it behind a socket would mean the only thing
+between a stolen credential and a payment run is that the thief must also wait
+for a human to click. **`:reconcile-timesheets` is withheld for a different
+reason**: the governor recomputes *nothing* for it (the contract basis and both
+arithmetic identities are gated behind `draft?`), and opening a port to a write
+the safety layer has no rule about is a decision to make by writing the rule
+first.
+
+The disciplines the surface carries, each of which is a way a surface undoes the
+actor behind it:
+
+- **An absent allow-list serves 503, never an open endpoint** — `nobody is
+  allowed` and `nothing was configured` are different deployment states.
+- **An unconfigured store serves 503, never an empty in-process one** — an empty
+  store fails the governor's provenance check on every request, so the caller is
+  told `:no-client` and blamed for a deployment fault.
+- **The employer comes from the verified DID, and a body naming one is
+  REFUSED** rather than ignored. This is stricter than the siblings, deliberately:
+  silently dropping it lets a caller believe they filed a payroll run against an
+  employer they did not.
+- **An unknown contract is 404, never an empty 200**, and another employer's
+  contract is a byte-identical 404 — otherwise a contract id is something a
+  competitor can probe for.
+- **202 for an escalation.** `awaiting a human signature` is neither done nor
+  refused. It is unreachable under the default mock advisor (whose lowest
+  confidence is 0.7, above the 0.6 floor), so the branch is exercised with a
+  swapped-in low-confidence advisor rather than left untested.
+- **Every run response carries `:withholding`.** The coverage is four-valued
+  where the article was reachable — `:checked` / `:out-of-scope` / `:not-declared`
+  / `:none` — and `:amount` is reported separately and is never `:checked`,
+  because 別表第二 / 別表第五 were not read.
+
+Twelve mutations measured across the store, the actor and the edge; all twelve
+redden, each in the tests that name the thing broken.
+
+## Zero `:local/root`
+
+Every dependency is a git coordinate. Verified 2026-08-18 from a fresh
+`git clone` into `/tmp` with `GITLIBS` pointed at an empty directory and no
+sibling checkout of langgraph, labor, governor, taxlaw or langchain-store in
+existence — which is the only check that proves it, since a *transitive*
+`:local/root` is just as fatal and does not appear in this repo's `deps.edn`.
+`langchain-store` was checked by **parsing** its `deps.edn` as EDN (4 distinct
+coordinates, 0 `:local/root`), not by grepping it: that file's comments contain
+the literal `:local/root` while its coordinates contain none.
 
 AGPL-3.0-or-later, forkable by any qualified operator. Part of the
 [cloud-itonami](https://itonami.cloud) open business fleet.
