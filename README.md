@@ -94,6 +94,29 @@ per submission. The caller appends them with the store's existing
 `append-ledger!` — the namespace itself makes no call and touches no store,
 asserted by a source scan like `shiwake`'s.
 
+### The route points the other way
+
+Being pure was right and it was also the problem: a namespace that calls
+nothing, and that nothing called, is reachable from nowhere, and the
+reconciliation it computed never reached the audit trail. Posting into 4311's
+ledger is actuation this repo does not do, so the arrow is reversed instead —
+**`POST /api/handoff` lets the carrier that already holds both halves bring
+the answer here.**
+
+Each entry in the body names its own submission, so the misattribution the
+batch form has to detect by comparing counts and source documents cannot
+arise: there is no position to get wrong. `:client-id` is stamped from the
+allow-list and overwrites whatever the body carried — `ledger-of` slices by
+exactly that key, so a body-chosen employer would write one client's
+reconciliation into another client's books. Every outcome is written, not only
+the refusals, and the response names the ones that are neither `:posted` nor
+`:duplicate` so the carrier learns in the same round-trip what a person still
+has to look at. An unreadable body appends **nothing**: half a batch is less
+trustworthy than none.
+
+Thirteen mutations cover the route (`nbb tools/mutate.cljs`); the table's
+header states that it covers the route and not the actor.
+
 | 4311 answered | fact records |
 |---|---|
 | `200` `:duplicate? false` | `:posted` + the posting id |
@@ -262,7 +285,7 @@ would then hold the *honest* proposal for `:wage-mismatch`.
 In each case the 33 pre-existing tests stay green, which is exactly the state
 the contract test exists to end.
 
-## The HTTP surface — three routes
+## The HTTP surface — four routes
 
 `src/payroll/edge/endpoints.cljc`, portable `.cljc`, `{:status n :body {...}}`
 in and out, no host effects and no framework.
@@ -271,6 +294,8 @@ in and out, no host effects and no framework.
 POST /api/payroll-run               draft a payroll run
 GET  /api/payroll-run/:contract-id  the whole life of one contract's runs
 GET  /api/ledger                    the caller's own slice of the ledger
+POST /api/handoff                   what the ledger actor answered about
+                                    runs this employer submitted
 ```
 
 **`:disburse-wages` has no HTTP representation and will not get one.** It is in

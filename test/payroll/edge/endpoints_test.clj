@@ -425,7 +425,7 @@
       (is (= direct (edge/route (seeded) nil allowlist "did:key:zAlice"
                                 {:method :get :path "/api/ledger"}))))))
 
-(deftest the-router-serves-three-routes-and-refuses-the-rest
+(deftest the-router-serves-four-routes-and-refuses-the-rest
   (let [st (seeded)
         call (fn [method path & [b]]
                (edge/route st :ephemeral allowlist "did:key:zAlice"
@@ -433,6 +433,11 @@
     (is (= 200 (:status (call :post "/api/payroll-run" (body)))))
     (is (= 200 (:status (call :get "/api/payroll-run/c-1"))))
     (is (= 200 (:status (call :get "/api/ledger"))))
+    (is (= 200 (:status (call :post "/api/handoff"
+                              (pr-str {:handoffs [{:submission {:contract-id "c-1"}
+                                                   :response {:status 200
+                                                              :body {:ok true
+                                                                     :duplicate? false}}}]})))))
     (testing "a path nobody declared is 404"
       (is (= 404 (:status (call :post "/api/disburse" (body)))))
       (is (= 404 (:status (call :post "/api/reconcile" (body)))))
@@ -458,3 +463,162 @@
       (is (= 1 (get-in (call :get "/api/ledger") [:body :count])))
       (is (= :datomic (get-in (call :post "/api/payroll-run" (body :period "2026-08"))
                               [:body :store]))))))
+
+;; ---------------------------------------------------------------------------
+;; Bringing the ledger actor's answer back
+;;
+;; `payroll.handoff` is pure and calls nothing, which is right — posting into
+;; another actor's ledger is actuation this repo does not do. The consequence
+;; was that nothing called it either: a namespace reachable from nowhere, whose
+;; reconciliation never touched the audit trail. These tests are about the
+;; route, not the pure function, so they are phrased about the CALLER.
+;; ---------------------------------------------------------------------------
+
+(defn- handoff-body [& pairs]
+  (pr-str {:handoffs (vec pairs)}))
+
+(def ^:private posted-200
+  {:status 200 :body {:ok true :duplicate? false :posting "je-abc"}})
+
+(defn- record [st did b]
+  (edge/record-handoff-core! st allowlist did b))
+
+(defn- handoffs-of [st client-id]
+  (filterv #(= :handoff (:disposition %)) (store/ledger-of st client-id)))
+
+(deftest the-route-is-what-makes-the-reconciliation-reach-the-ledger
+  (testing "before it, handoff was computed by nobody and read by nobody"
+    (let [st (seeded)
+          r (record st "did:key:zAlice"
+                    (handoff-body {:submission {:contract-id "c-1" :period "2026-07"
+                                                :shiwake/request {:source-doc "c-1"}}
+                                   :response posted-200}))]
+      (is (= 200 (:status r)))
+      (is (= 1 (get-in r [:body :recorded])))
+      (let [[f] (handoffs-of st "emp-1")]
+        (is (= :posted (:handoff/outcome f)))
+        (is (= "je-abc" (:handoff/posting f)))
+        (is (= "c-1" (:handoff/source-doc f)))))))
+
+(deftest the-employer-comes-from-the-did-here-too
+  (testing "ledger-of slices by :client-id, so a body-chosen employer would
+            write one client's reconciliation into another client's books"
+    (let [st (seeded)]
+      (is (= 200 (:status (record st "did:key:zAlice"
+                                  (handoff-body {:submission {:client-id "emp-2"
+                                                              :contract-id "c-1"
+                                                              :shiwake/request {:source-doc "c-1"}}
+                                                 :response posted-200})))))
+      (is (= 1 (count (handoffs-of st "emp-1"))) "landed in the caller's slice")
+      (is (empty? (handoffs-of st "emp-2")) "and not in the one the body named"))))
+
+(deftest a-handoff-is-never-counted-as-a-commit
+  (testing "a reader tallying what this actor paid must not tally what another
+            actor recorded"
+    (let [st (seeded)]
+      (record st "did:key:zAlice"
+              (handoff-body {:submission {:contract-id "c-1"} :response posted-200}))
+      (is (= [:handoff] (mapv :disposition (store/ledger-of st "emp-1")))))))
+
+(deftest every-outcome-is-recorded-not-only-the-refusals
+  (testing "a ledger that drops the successes cannot answer `was this run
+            recorded downstream`, which is what the seam exists for"
+    (let [st (seeded)
+          r (record st "did:key:zAlice"
+                    (handoff-body {:submission {:contract-id "c-1"} :response posted-200}
+                                  {:submission {:contract-id "c-2"}
+                                   :response {:status 409 :body {:ok false :violations []}}}
+                                  {:submission {:contract-id "c-3"}
+                                   :response {:status 200 :body {:ok true :duplicate? true}}}))]
+      (is (= 3 (get-in r [:body :recorded])))
+      (is (= 3 (count (handoffs-of st "emp-1"))))
+      (is (= {:posted 1 :held 1 :duplicate 1} (get-in r [:body :outcomes]))))))
+
+(deftest unresolved-names-what-a-person-still-has-to-look-at
+  (testing "the carrier learns it in the same round-trip, rather than having to
+            re-read the ledger to find out whether anything needs attention"
+    (let [st (seeded)
+          r (record st "did:key:zAlice"
+                    (handoff-body {:submission {:contract-id "c-1"} :response posted-200}
+                                  {:submission {:contract-id "c-2"}
+                                   :response {:status 200 :body {:ok true :duplicate? true}}}
+                                  {:submission {:contract-id "c-3"}
+                                   :response {:status 409 :body {:ok false}}}))]
+      (is (= ["c-3"] (mapv :contract-id (get-in r [:body :unresolved])))
+          "a duplicate is settled; a hold is not"))))
+
+(deftest the-carrier-states-the-pairing-so-position-cannot-be-wrong
+  (testing "the batch form must detect misattribution because position is all
+            it has; here each pair names its own submission"
+    (let [st (seeded)]
+      (record st "did:key:zAlice"
+              (handoff-body {:submission {:contract-id "c-2"}
+                             :response {:status 409 :body {:ok false}}}
+                            {:submission {:contract-id "c-1"} :response posted-200}))
+      (is (= {"c-2" :held "c-1" :posted}
+             (into {} (map (juxt :contract-id :handoff/outcome))
+                   (handoffs-of st "emp-1")))))))
+
+(deftest an-unreadable-handoff-body-appends-nothing
+  (testing "a ledger holding half a batch is less trustworthy than an empty one"
+    (doseq [b ["(((" "42" "{:handoffs {}}" "{:handoffs []}"
+               (pr-str {:handoffs [{:submission {} :response posted-200}
+                                   {:submission {}}]})]]
+      (let [st (seeded)
+            r (record st "did:key:zAlice" b)]
+        (is (= 400 (:status r)) (str "for " b))
+        (is (empty? (store/ledger-of st "emp-1")) (str "wrote nothing, for " b))))))
+
+(deftest a-response-that-is-not-a-map-is-the-callers-error-not-an-odd-answer
+  (testing "recording it as :unreadable would blame the ledger actor for a
+            malformed request this actor's own caller sent"
+    (let [st (seeded)
+          r (record st "did:key:zAlice"
+                    (pr-str {:handoffs [{:submission {:contract-id "c-1"}
+                                         :response "200 OK"}]}))]
+      (is (= 400 (:status r)))
+      (is (empty? (store/ledger-of st "emp-1"))))))
+
+(deftest the-handoff-route-has-the-same-two-gates-as-the-others
+  (let [st (seeded)
+        b (handoff-body {:submission {:contract-id "c-1"} :response posted-200})]
+    (is (= 503 (:status (edge/record-handoff-core! st nil "did:key:zAlice" b))))
+    (is (= 403 (:status (record st "did:key:zMallory" b))))
+    (is (empty? (store/ledger-of st "emp-1")) "neither gate wrote anything")))
+
+(deftest the-router-reaches-the-handoff-route
+  (testing "a core function nothing routes to is reachable from nothing —
+            which is the defect this route exists to fix"
+    (let [st (seeded)
+          call (fn [method b]
+                 (edge/route st :ephemeral allowlist "did:key:zAlice"
+                             {:method method :path "/api/handoff" :body b}))]
+      (is (= 200 (:status (call :post (handoff-body {:submission {:contract-id "c-1"}
+                                                     :response posted-200})))))
+      (is (= 1 (count (handoffs-of st "emp-1"))))
+      (is (= 405 (:status (call :get nil))))
+      (is (= [:post] (get-in (call :get nil) [:body :allow]))))))
+
+(deftest a-set-of-pairs-is-refused-because-a-set-is-not-a-list-of-events
+  (testing "a set silently drops a hand-off repeated inside one batch and
+            gives :unresolved no stable order — two records of the same run
+            answered twice is a fact about the carrier, not a duplicate to
+            collapse"
+    (let [st (seeded)
+          r (record st "did:key:zAlice"
+                    (pr-str {:handoffs #{{:submission {:contract-id "c-1"}
+                                          :response posted-200}}}))]
+      (is (= 400 (:status r)))
+      (is (empty? (store/ledger-of st "emp-1"))))))
+
+(deftest a-pair-with-no-submission-is-refused-rather-than-recorded-unjoinable
+  (testing "`payroll.handoff` tolerates an unidentifiable submission on
+            purpose — losing the outcome would be worse than recording an
+            unjoinable one. The route does not have that excuse: its caller
+            can be told to send the submission, and a fact with no contract
+            is one nobody can ever read back"
+    (let [st (seeded)
+          r (record st "did:key:zAlice"
+                    (pr-str {:handoffs [{:response posted-200}]}))]
+      (is (= 400 (:status r)))
+      (is (empty? (store/ledger-of st "emp-1"))))))
