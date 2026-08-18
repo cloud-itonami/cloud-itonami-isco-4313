@@ -172,14 +172,31 @@
       (conj {:rule :net-mismatch
              :detail (str "net " net " ≠ gross − deductions = " (- gross (or deductions 0)))})
 
-      ;; 5. the employer declared a jurisdiction nobody has catalogued. An
-      ;; unchecked jurisdiction is a hold, not a pass — otherwise declaring
-      ;; an unknown one would be the cheapest way to skip rule 6.
+      ;; 5. the employer declared a jurisdiction whose withholding rule this
+      ;; workspace cannot check — either because nobody catalogued the
+      ;; jurisdiction, or because it IS catalogued and the withholding facet
+      ;; was deliberately left out of it. Either way a hold, not a pass;
+      ;; otherwise declaring an unknown jurisdiction would be the cheapest
+      ;; way to skip rule 6.
+      ;;
+      ;; The two are the same verdict and NOT the same sentence, and here the
+      ;; difference is worse than a wrong pointer. `kotoba.taxlaw に無い` is
+      ;; false for `[:us]` — the United States is in the catalog and **does**
+      ;; oblige an employer to withhold (IRC §3402); what happened is that
+      ;; nobody read it. Telling an operator the jurisdiction is unknown
+      ;; invites the conclusion that no obligation exists, which for payroll
+      ;; is the expensive direction to be wrong in.
       (= :none (:taxlaw/coverage withholding))
       (conj {:rule :unchecked-jurisdiction
-             :detail (str "employer が法域 " (pr-str juris)
-                          " を宣言しているが kotoba.taxlaw に無い"
-                          "（未検査は合格ではない）")})
+             :taxlaw/out-of-scope (:taxlaw/out-of-scope withholding)
+             :detail (if-let [why (:taxlaw/why withholding)]
+                       (str "employer が法域 " (pr-str juris)
+                            " を宣言しているが、源泉徴収義務を検査できない: " why
+                            "。これは義務が無いという意味ではない"
+                            "（未検査は合格ではない）")
+                       (str "employer が法域 " (pr-str juris)
+                            " を宣言しているが kotoba.taxlaw に無い"
+                            "（未検査は合格ではない）"))})
 
       ;; 6. the jurisdiction obliges the payer to withhold income tax on this
       ;; payment, and the proposal does not account for any. 所得税法

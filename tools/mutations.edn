@@ -94,4 +94,45 @@
   :invariant "a reader counting what this actor paid must not count these"
   :file "src/payroll/handoff.cljc"
   :find "(merge {:disposition :handoff}"
-  :replace "(merge {:disposition :commit}"}]
+  :replace "(merge {:disposition :commit}"}
+
+ ;; --- two more jurisdictions in taxlaw (2026-08-18). For payroll the risk is
+ ;; not that a run gets approved — it does not — but that a HOLD explains
+ ;; itself as `unknown country` when the truth is `we did not read IRC §3402`,
+ ;; and an operator concludes there is no obligation. ---
+
+ {:id :an-uncheckable-withholding-rule-is-still-a-hold
+  :invariant "a US payroll run is held as hard as before the US was catalogued"
+  :file "src/payroll/governor.cljc"
+  :find "      (= :none (:taxlaw/coverage withholding))"
+  :replace "      (= :nope (:taxlaw/coverage withholding))"}
+
+ {:id :the-payroll-hold-explains-itself-accurately
+  :invariant "`kotoba.taxlaw に無い` is false for a catalogued jurisdiction"
+  :file "src/payroll/governor.cljc"
+  :find "             :detail (if-let [why (:taxlaw/why withholding)]"
+  :replace "             :detail (if-let [why nil]"}
+
+ {:id :unread-is-not-absent-and-the-detail-says-so
+  :invariant "the US does oblige withholding; only the reading is missing"
+  :file "src/payroll/governor.cljc"
+  :find "                            \"。これは義務が無いという意味ではない\""
+  :replace "                            \"。\""}
+
+ {:id :the-out-of-scope-facet-is-forwarded-to-the-operator
+  :invariant "an operator learns WHICH facet was missing"
+  :file "src/payroll/governor.cljc"
+  :find "             :taxlaw/out-of-scope (:taxlaw/out-of-scope withholding)"
+  :replace "             :taxlaw/out-of-scope nil"}
+
+ {:id :a-really-absent-jurisdiction-keeps-the-old-sentence
+  :invariant "the new sentence must not replace the old one wholesale"
+  :file "src/payroll/governor.cljc"
+  :find "                       (str \"employer が法域 \" (pr-str juris)\n                            \" を宣言しているが kotoba.taxlaw に無い\""
+  :replace "                       (str \"employer が法域 \" (pr-str juris)\n                            \" を宣言しているが検査できない\""}
+
+ {:id :the-taxlaw-pin-carries-the-two-new-jurisdictions
+  :invariant "the bump is measured, not assumed"
+  :file "deps.edn"
+  :find "\"d2663b54aad645244e61ae548054943b1229c1fc\""
+  :replace "\"a4a68050e30622dd92990dcdab94038a07d46998\""}]
