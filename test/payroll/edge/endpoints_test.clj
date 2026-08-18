@@ -9,7 +9,8 @@
   money-moving op behind a socket, and does not report `nobody read the
   withholding law` and `we read it and this run satisfies it` with the same
   body."
-  (:require [clojure.test :refer [deftest is testing]]
+  (:require [clojure.string :as str]
+            [clojure.test :refer [deftest is testing]]
             [kotoba.labor :as labor]
             [payroll.advisor :as advisor]
             [payroll.edge.endpoints :as edge]
@@ -425,7 +426,11 @@
       (is (= direct (edge/route (seeded) nil allowlist "did:key:zAlice"
                                 {:method :get :path "/api/ledger"}))))))
 
-(deftest the-router-serves-four-routes-and-refuses-the-rest
+;; The route set grew from four to five when `:assess-year-end-adjustment`
+;; landed. This test is the one place that enumerates the surface, so it is
+;; the one place that had to change; no assertion in it was weakened, and the
+;; three 404/405 groups below are unchanged.
+(deftest the-router-serves-five-routes-and-refuses-the-rest
   (let [st (seeded)
         call (fn [method path & [b]]
                (edge/route st :ephemeral allowlist "did:key:zAlice"
@@ -438,6 +443,10 @@
                                                    :response {:status 200
                                                               :body {:ok true
                                                                      :duplicate? false}}}]})))))
+    (is (= 409 (:status (call :post "/api/year-end-adjustment"
+                              (pr-str {:contract-id "c-1" :year "2026"
+                                       :final-payment-of-year? true}))))
+        "the route is reachable; c-1 registers no 申告書, so it HOLDS")
     (testing "a path nobody declared is 404"
       (is (= 404 (:status (call :post "/api/disburse" (body)))))
       (is (= 404 (:status (call :post "/api/reconcile" (body)))))
@@ -446,7 +455,10 @@
       (is (= 405 (:status (call :get "/api/payroll-run"))))
       (is (= [:post] (get-in (call :get "/api/payroll-run") [:body :allow])))
       (is (= 405 (:status (call :post "/api/ledger"))))
-      (is (= 405 (:status (call :post "/api/payroll-run/c-1")))))))
+      (is (= 405 (:status (call :post "/api/payroll-run/c-1"))))
+      (is (= 405 (:status (call :get "/api/year-end-adjustment"))))
+      (is (= [:post] (get-in (call :get "/api/year-end-adjustment")
+                             [:body :allow]))))))
 
 (deftest the-router-carries-reads-across-requests-on-the-durable-backend
   (testing "a router that built its own store per request would answer 404 to
@@ -622,3 +634,183 @@
                     (pr-str {:handoffs [{:response posted-200}]}))]
       (is (= 400 (:status r)))
       (is (empty? (store/ledger-of st "emp-1"))))))
+
+;; ---------------------------------------------------------------------------
+;; POST /api/year-end-adjustment
+;;
+;; What has to live here is that the surface does not turn a nine-valued
+;; reading of 所得税法 第百九十条 into a green tick, does not let the body say
+;; whose 年末調整 this is, and does not accept a string where the article needs
+;; a declared fact.
+;; ---------------------------------------------------------------------------
+
+(defn- nen-seeded
+  "`seeded`, plus a second contract for emp-1 on which the 申告書 IS
+  registered. Having both is the point: the default contract leaves it
+  unobserved, which must hold."
+  ([] (nen-seeded []))
+  ([runs]
+   (let [st (seeded)]
+     (store/register-contract!
+      st (merge (labor/contract "c-1-nen" "worker-1" "emp-1" "baker" :hourly 2000)
+                {:employment/recipient-residency :resident
+                 :employment/paid-in :domestic
+                 :employment/year-end-declaration-filed? true}))
+     (doseq [r runs] (store/commit-record! st r))
+     st)))
+
+(defn- nen-body [& {:as overrides}]
+  (pr-str (merge {:contract-id "c-1-nen" :year "2026"
+                  :final-payment-of-year? true}
+                 overrides)))
+
+(defn- nen [st did b]
+  (edge/assess-year-end-core! st :ephemeral allowlist did b))
+
+(deftest the-year-end-route-has-the-same-two-gates-as-the-others
+  (let [st (nen-seeded)]
+    (is (= 503 (:status (edge/assess-year-end-core!
+                         st :ephemeral nil "did:key:zAlice" (nen-body)))))
+    (is (= 403 (:status (nen st "did:key:zMallory" (nen-body)))))))
+
+(deftest a-fully-observed-year-end-question-is-answered-with-200
+  (let [r (nen (nen-seeded) "did:key:zAlice" (nen-body))
+        a (get-in r [:body :year-end-adjustment])]
+    (is (= 200 (:status r)))
+    (is (= :commit (get-in r [:body :disposition])))
+    (is (= "emp-1" (get-in r [:body :employer])))
+    (is (= "2026" (get-in r [:body :year])))
+    (is (= :owed (:answer a)))
+    (is (true? (:answerable? a)))
+    (is (= "所得税法 第百九十条" (:provision a)))
+    (testing "a 200 is not an approval — no :ok true anywhere on it"
+      (is (not (contains? (:body r) :ok))))
+    (testing "and it still refuses to produce a figure"
+      (is (= :not-computable (get-in a [:amount :nenmatsu/over-or-under])))
+      (is (= :not-computable (get-in a [:amount :nenmatsu/annual-tax])))
+      (is (str/includes? (get-in a [:amount :nenmatsu/amount-source-not-read])
+                         "別表")))))
+
+(deftest the-three-passes-that-are-the-article-not-reaching-this-employee
+  (testing "`not yet`, `no 申告書 filed` and `over 二千万円` all commit and are
+            all different answers. A boolean would print them the same, and
+            only one of the three is an instruction to come back"
+    (let [not-yet (nen (nen-seeded) "did:key:zAlice"
+                       (nen-body :final-payment-of-year? false))
+          over (nen (nen-seeded [{:client-id "emp-1" :op :draft-payroll-run
+                                  :contract-id "c-1-nen"
+                                  :payload {:op :draft-payroll-run
+                                            :period "2026-07"
+                                            :gross 20000001
+                                            :income-tax-withheld 1}}])
+                    "did:key:zAlice" (nen-body))]
+      (is (= 200 (:status not-yet)))
+      (is (= 200 (:status over)))
+      (is (= :year-not-finished (get-in not-yet [:body :year-end-adjustment :answer])))
+      (is (= :above-ceiling (get-in over [:body :year-end-adjustment :answer])))
+      (is (every? true? [(get-in not-yet [:body :year-end-adjustment :answerable?])
+                         (get-in over [:body :year-end-adjustment :answerable?])])))))
+
+(deftest an-unobserved-declaration-is-409-and-names-the-rule
+  (testing "c-1 registers no 申告書. Software cannot see a piece of paper, and
+            unseen is not filed"
+    (let [r (nen (nen-seeded) "did:key:zAlice" (nen-body :contract-id "c-1"))]
+      (is (= 409 (:status r)))
+      (is (= :hold (get-in r [:body :disposition])))
+      (is (some #(= :year-end-declaration-not-observed (:rule %))
+                (get-in r [:body :violations])))
+      (is (= :declaration-not-observed
+             (get-in r [:body :year-end-adjustment :answer])))
+      (is (false? (get-in r [:body :year-end-adjustment :answerable?]))))))
+
+(deftest a-jurisdiction-whose-year-end-facet-was-not-read-is-409-not-200
+  (testing "adding this op must not widen a pass. emp-2 declares [:us], whose
+            年末調整 facet taxlaw records as out-of-scope"
+    (let [st (seeded store/mem-store [:us])]
+      (store/register-contract!
+       st (merge (labor/contract "c-2-nen" "worker-2" "emp-2" "engraver" :hourly 3000)
+                 {:employment/year-end-declaration-filed? true}))
+      (let [r (nen st "did:key:zBob" (nen-body :contract-id "c-2-nen"))
+            hit (first (filter #(= :unchecked-year-end-jurisdiction (:rule %))
+                               (get-in r [:body :violations])))]
+        (is (= 409 (:status r)))
+        (is (some? hit))
+        (is (str/includes? (:detail hit) "annual return")
+            "the catalog's own reason reaches the operator")
+        (is (= :not-catalogued (get-in r [:body :year-end-adjustment :answer])))))))
+
+(deftest the-body-cannot-say-whose-year-end-this-is
+  (doseq [k [:client-id :employer :employer-id :contract/employer]]
+    (testing (str k)
+      (let [r (nen (nen-seeded) "did:key:zAlice"
+                   (pr-str {:contract-id "c-1-nen" :year "2026"
+                            :final-payment-of-year? true k "emp-2"}))]
+        (is (= 400 (:status r)))
+        (is (str/includes? (get-in r [:body :error]) "verified caller"))))))
+
+(deftest a-year-end-request-must-name-a-year
+  (doseq [b [(pr-str {:contract-id "c-1-nen"})
+             (pr-str {:contract-id "c-1-nen" :year "  "})
+             (pr-str {:contract-id "c-1-nen" :year 2026})
+             "not edn ["
+             "[:a :vector]"]]
+    (testing (pr-str b)
+      (is (= 400 (:status (nen (nen-seeded) "did:key:zAlice" b)))))))
+
+(deftest a-string-is-not-a-declaration-at-the-edge-either
+  (testing "the caller who sent \"true\" is told, and the caller who bypasses
+            this surface still cannot buy a pass — `payroll.nenmatsu`
+            normalises it to nil, which HOLDS"
+    (doseq [bad ["true" 1 :yes]]
+      (testing (pr-str bad)
+        (let [r (nen (nen-seeded) "did:key:zAlice"
+                     (nen-body :final-payment-of-year? bad))]
+          (is (= 400 (:status r)))
+          (is (str/includes? (get-in r [:body :error]) "true or false")))
+        (let [r (nen (nen-seeded) "did:key:zAlice"
+                     (nen-body :year-end-adjustment-settled? bad))]
+          (is (= 400 (:status r))))))))
+
+(deftest the-op-is-hardcoded-and-a-body-naming-another-cannot-reach-it
+  (testing "a body asking for :disburse-wages assesses a year end"
+    (let [r (nen (nen-seeded) "did:key:zAlice" (nen-body :op :disburse-wages))]
+      (is (= 200 (:status r)))
+      (is (= :owed (get-in r [:body :year-end-adjustment :answer]))))))
+
+(deftest an-assessment-in-the-ledger-is-not-a-payroll-run-that-paid-nothing
+  (testing "an assessment record has no gross and no period. Rendered like a
+            run it would read as a payment of nothing — the worst lie this
+            ledger could tell, told about the op whose whole point is not to
+            invent figures"
+    (let [st (nen-seeded)]
+      (is (= 200 (:status (edge/submit-payroll-run-core!
+                           st :ephemeral allowlist "did:key:zAlice" (body)))))
+      (is (= 200 (:status (nen st "did:key:zAlice" (nen-body)))))
+      (let [entries (get-in (edge/ledger-core st allowlist "did:key:zAlice")
+                            [:body :entries])
+            assessment (last entries)]
+        (is (= 2 (count entries)))
+        (is (= [:draft-payroll-run :assess-year-end-adjustment] (mapv :op entries)))
+        (is (= "2026" (:year assessment)))
+        (is (nil? (:gross assessment)))
+        (is (= :owed (get-in assessment [:year-end-adjustment :answer])))
+        (testing "and the payroll run is not reported as having a year-end answer"
+          (is (= :not-assessed
+                 (get-in (first entries) [:year-end-adjustment :answer])))
+          (is (false? (get-in (first entries)
+                              [:year-end-adjustment :answerable?]))))))))
+
+(deftest year-end-summary-of-a-verdict-that-carried-no-assessment
+  (testing "`not assessed` is not an answer and must not print as one"
+    (is (= {:answer :not-assessed :answerable? false}
+           (edge/year-end-summary nil)))
+    (is (= {:answer :not-assessed :answerable? false}
+           (edge/year-end-summary {:tax {:jurisdiction [:jp]}})))))
+
+(deftest a-year-end-assessment-is-visible-in-the-contract-history
+  (let [st (nen-seeded)]
+    (nen st "did:key:zAlice" (nen-body))
+    (let [r (edge/run-verdict-core st allowlist "did:key:zAlice" "c-1-nen")]
+      (is (= 200 (:status r)))
+      (is (= [:assess-year-end-adjustment] (mapv :op (get-in r [:body :history]))))
+      (is (= ["2026"] (mapv :year (get-in r [:body :history])))))))

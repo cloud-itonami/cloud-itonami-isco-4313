@@ -93,3 +93,64 @@
       (is (= :done (:status resumed)))
       (is (some? (get-in resumed [:state :record])))
       (is (= 1 (count (store/records-of st "emp-1")))))))
+
+;; ---------------------------------------------------------------------------
+;; 年末調整 through the graph
+;; ---------------------------------------------------------------------------
+
+(defn- nen-store [& {:keys [declaration]}]
+  (let [st (store/mem-store)]
+    (store/register-client! st {:client-id "emp-jp" :name "Studio Kotoba"
+                                :jurisdiction [:jp]})
+    (store/register-contract!
+     st (cond-> (labor/contract "c-jp" "worker-1" "emp-jp" "baker" :hourly 2000)
+          (some? declaration)
+          (assoc :employment/year-end-declaration-filed? declaration)))
+    st))
+
+(deftest an-assessment-is-a-governed-op-and-not-a-bare-function
+  (testing "it runs the same graph, commits a record and leaves a ledger
+            entry — an assessment nobody can read back later is not one"
+    (let [st (nen-store :declaration true)
+          graph (actor/build-graph {:store st})
+          request {:client-id "emp-jp" :op :assess-year-end-adjustment
+                   :contract-id "c-jp" :year "2026"
+                   :final-payment-of-year? true}
+          r (actor/run-request! graph request {} "nen-1")]
+      (is (= :done (:status r)))
+      (is (= :commit (get-in r [:state :disposition])))
+      (is (= :owed (get-in r [:state :verdict :nenmatsu :nenmatsu/answer])))
+      (is (= 1 (count (store/records-of st "emp-jp"))))
+      (let [entry (last (store/ledger st))]
+        (is (= :commit (:disposition entry)))
+        (is (= "2026" (:year entry))
+            "the ledger stamp carries the year; this op has no period, and an
+             assessment that cannot be attributed to a year is not one")
+        (is (= "c-jp" (:contract-id entry)))
+        (is (= 1 (count (store/run-history st "c-jp"))))))))
+
+(deftest an-unobserved-declaration-holds-the-graph-and-writes-no-record
+  (let [st (nen-store)
+        graph (actor/build-graph {:store st})
+        r (actor/run-request! graph
+                              {:client-id "emp-jp" :op :assess-year-end-adjustment
+                               :contract-id "c-jp" :year "2026"
+                               :final-payment-of-year? true}
+                              {} "nen-2")]
+    (is (= :hold (get-in r [:state :disposition])))
+    (is (empty? (store/records-of st "emp-jp")))
+    (testing "the hold is still in the ledger, with the year it refused about"
+      (let [entry (last (store/ledger st))]
+        (is (= :hold (:disposition entry)))
+        (is (= "2026" (:year entry)))))))
+
+(deftest a-payroll-run-ledger-entry-carries-no-year-key-at-all
+  (testing "absent rather than nil, so a reader counting years is not handed
+            one for an op that has none"
+    (let [st (fresh-store)
+          graph (actor/build-graph {:store st})]
+      (actor/run-request! graph {:client-id "emp-1" :op :draft-payroll-run
+                                 :contract-id "c-1" :period "2026-07"
+                                 :deductions 3000}
+                          {} "thread-year")
+      (is (not (contains? (last (store/ledger st)) :year))))))

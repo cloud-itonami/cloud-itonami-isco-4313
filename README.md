@@ -26,6 +26,12 @@ withheld income tax where the law requires it (see 源泉徴収 below).
 Escalations (always human sign-off): `:disburse-wages` (real fund
 movement), low confidence (< 0.6).
 
+**A second governed op, `:assess-year-end-adjustment`**, reads 所得税法
+第百九十条 over registered facts and answers whether a 年末調整 is owed —
+**without computing the over/under, which nothing this repo has read can
+compute**. Four of its nine answers are the absence of an answer and every one
+of them is HARD. See 年末調整 below.
+
 ## 仕訳 — an approved payroll run becoming a journal entry
 
 Deciding is not bookkeeping. **A payroll run that was approved and never
@@ -243,15 +249,151 @@ unchecked case.
 and 1 yen of withholding on 28,000 of wages passes this gate. What is gated is
 that the run accounts for withholding at all.
 
-**年末調整 (所得税法 第百九十条) is read and catalogued upstream, and this
-actor does not check it** — it has no year-end op, and a payroll-run draft
-asserts nothing about the year's final payment. Every draft verdict records
-`[:tax :year-end-adjustment :taxlaw/coverage] :not-evaluated` with a reason,
-because a rule that is silently never called looks exactly like a rule that
-was called and passed.
+**年末調整 (所得税法 第百九十条) is still not checked on a payroll-run DRAFT**,
+which asserts nothing about the year's final payment. Every draft verdict
+records `[:tax :year-end-adjustment :taxlaw/coverage] :not-evaluated` with a
+reason, because a rule that is silently never called looks exactly like a rule
+that was called and passed. What changed on 2026-08-18 is that there is now a
+separate op that DOES evaluate it — see 年末調整 below. The draft path was left
+alone; adding the op widened no pass.
 
-Eight mutations measured; all eight redden, each in the tests that name the
-thing broken.
+Five mutations cover this hold's explanation and all five redden. A sixth — a
+rollback of the `taxlaw` pin — was **removed** on 2026-08-18 and the reason is
+recorded in `tools/mutations.edn`: 年末調整 made the newer pin load-bearing for
+compilation (`taxlaw/facet-of` does not exist at the old sha), so the rollback
+now breaks the reader rather than an invariant, and this harness scores that as
+UNMEASURED rather than as a kill. A stale pin is still caught — by the build,
+which is the louder signal — and the pin's content is asserted directly against
+the dependency.
+
+## 年末調整 — the op that refuses to invent a figure
+
+**`kotoba-lang/taxlaw` had read 所得税法 第百九十条 from source and no actor in
+this workspace called any of the three functions it exposes.** The law was
+catalogued and nothing acted on it — a capability that existed only as a
+citation. `:assess-year-end-adjustment` is the op that acts on it, and
+`payroll.nenmatsu` is the reading.
+
+```
+第百九十条  給与所得者の扶養控除等申告書を提出した居住者で、…その年中に支払う
+           べきことが確定した給与等の金額が二千万円以下であるものに対し、その
+           提出の際に経由した給与等の支払者がその年最後に給与等の支払をする場合
+           …において、…過不足があるときは、その超過額は、その年最後に給与等の
+           支払をする際徴収すべき所得税に充当し、その不足額は、…徴収して…
+```
+
+### The over/under is not computable, and no number is produced
+
+The article applies the excess against, and collects the shortfall with, the
+year's final payment. **The year's correct tax comes from 別表 (税額表), which
+taxlaw explicitly records as unread** (`:rule/amount-source-not-read`) — the
+same limit the withholding rule already lives inside, where every result
+carries `:taxlaw/amount-checked? false`.
+
+So `:nenmatsu/amount` reports `:not-computable` for both the year's tax and the
+over/under, names the unread table (**read off taxlaw, never typed here**), and
+reports only figures this actor actually holds: the wages and the withheld
+income tax **it itself committed** for that year, with the count of runs that
+recorded no withheld amount. A figure invented here would be the most dangerous
+value in the repository — it would arrive stamped with an article of the Income
+Tax Act and nothing downstream could check it.
+
+### Nine answers, four of which are the absence of an answer
+
+| answer | commits? |
+|---|---|
+| `:owed` / `:settled` | yes — the three conditions hold |
+| `:year-not-finished` | yes — **come back after the last payslip**, an instruction, not a finding |
+| `:declaration-not-filed` | yes — 第百九十条 does not reach this employee; nothing is said about 確定申告 |
+| `:above-ceiling` | yes — outside 二千万円 |
+| `:jurisdiction-not-declared` | **HELD** — no law was consulted |
+| `:not-catalogued` | **HELD** — the facet was not read. Not read is not absent |
+| `:declaration-not-observed` | **HELD** — software cannot see a piece of paper |
+| `:final-payment-not-declared` | **HELD** — this actor has no clock |
+
+`kotoba.taxlaw` returns ONE `:out-of-scope` for three different facts, two
+permanent and one that resolves itself in December. An operator told `out of
+scope` cannot tell `this employee never qualifies` from `come back after the
+last payslip`, and only the second is an instruction — so the three are
+separated here, and taxlaw's own verdict is carried verbatim in
+`:nenmatsu/taxlaw` so the split is auditable rather than merely asserted.
+
+**Terminal answers are decided before transient ones**, so a permanent gap
+cannot hide behind a `come back later`. That makes one answer diverge from
+taxlaw's on purpose, and a test names the case.
+
+### The ceiling is checked, in exactly one direction
+
+二千万円**以下** is inclusive: at exactly 20,000,000 the employee is inside, and
+the boundary is pinned at 20,000,000 / 20,000,001. The ceiling itself is read
+from taxlaw's `:rule/income-ceiling-yen`, not typed here.
+
+The figure it is tested against is the wages **this actor committed** for that
+year, which is not 「その年中に支払うべきことが確定した給与等の金額」: wages paid
+before this actor was deployed, or through another system, cannot be seen from
+here. Unseen wages only add, so
+
+* recorded **>** 二千万円 ⇒ definitely above, and
+* recorded **≤** 二千万円 ⇒ **does not establish** the employee is inside.
+
+`:establishes-inside?` is therefore `false` even when `:inside?` is `true`. With
+no recorded runs, `:inside?` is nil and `:no-runs-recorded?` is true — zero
+recorded wages is not a fact about wages.
+
+### The declaration is a fact software cannot observe
+
+給与所得者の扶養控除等申告書 is a piece of paper. It is registered on the
+**contract** (`:employment/year-end-declaration-filed?`) by an operator, exactly
+as `:employment/recipient-residency` is, and **unregistered is its own answer
+and a HOLD** — the discipline `:yuryo-chobo-declared?` keeps in the sibling
+bookkeeping actor. `"true"` is not a declaration either: `payroll.nenmatsu`
+normalises anything non-boolean to nil, which holds, and the edge returns 400 so
+the caller is told. Both halves exist because a caller who bypasses the surface
+must still not get a pass.
+
+### The year may not be over
+
+「その年最後に給与等の支払をする場合」 is a condition about a payment that may not
+have happened. This actor has no clock and cannot see whether another payment is
+coming, so an undeclared final payment is **HELD** and a declared `false` is
+`:year-not-finished` — which commits, because *not yet* is not *never*.
+
+### Non-JP must not widen a pass
+
+`requires-year-end-adjustment?` is nil for `[:eu]` and `[:us]`; both are
+catalogued with that facet `:out-of-scope`. Both are **held**, with the catalog's
+own reason forwarded — the United States has no year-end adjustment because the
+annual return performs that function, **and IRC §6012 was not read**. A
+jurisdiction nobody catalogued at all is held too, and says so differently.
+`payroll.conformance-test/every-year-end-answer-is-either-answered-or-held`
+pins the equivalence in both directions: answerable ⇔ not held.
+
+### Where it is read from is not negotiable
+
+The jurisdiction comes off the **employer**, the 申告書 off the **registered
+contract**, the final-payment and settled declarations off the **request** — and
+the contract being assessed is named by the **request**, not by the proposal. An
+assessment has no arithmetic for the governor to recompute, so nothing the
+advisor writes is load-bearing; an advisor that could name the contract would be
+the thing deciding whose 年末調整 gets looked at. `payroll.governor-test/an-advisor-cannot-move-the-year-end-answer`
+feeds an advisor emitting every one of those keys and asserts the assessment is
+identical.
+
+### Measured
+
+`payroll.nenmatsu`, the governor's five assessment rules, the route and the two
+places assessment records had to become legible in the ledger carry **35
+mutations** (entries 19-53 of the table), every one of which reddens in the
+tests that name the thing broken. Several were written before the tests they
+turned out to measure; none survived, and the one entry that could not be
+measured at all was removed with its reason recorded rather than left green.
+
+### It is legible in the ledger
+
+An assessment record has no gross and no period. Rendered like a payroll run it
+would read as a payment of nothing — the worst lie this ledger could tell, told
+about the op whose whole point is not to invent figures. So the ledger stamp
+carries `:year`, and both read routes carry `:op`.
 
 ## Two backends, and a contract test that cannot degrade to one
 
@@ -285,7 +427,7 @@ would then hold the *honest* proposal for `:wage-mismatch`.
 In each case the 33 pre-existing tests stay green, which is exactly the state
 the contract test exists to end.
 
-## The HTTP surface — four routes
+## The HTTP surface — five routes
 
 `src/payroll/edge/endpoints.cljc`, portable `.cljc`, `{:status n :body {...}}`
 in and out, no host effects and no framework.
@@ -296,6 +438,8 @@ GET  /api/payroll-run/:contract-id  the whole life of one contract's runs
 GET  /api/ledger                    the caller's own slice of the ledger
 POST /api/handoff                   what the ledger actor answered about
                                     runs this employer submitted
+POST /api/year-end-adjustment       is a 年末調整 owed for one employee and
+                                    one year, and what can be computed
 ```
 
 **`:disburse-wages` has no HTTP representation and will not get one.** It is in
@@ -331,9 +475,17 @@ actor behind it:
   where the article was reachable — `:checked` / `:out-of-scope` / `:not-declared`
   / `:none` — and `:amount` is reported separately and is never `:checked`,
   because 別表第二 / 別表第五 were not read.
+- **A 200 on `/api/year-end-adjustment` is not an approval.** It means the
+  actor could answer, and the answer is in the body — three of the five
+  answers that commit are the article NOT reaching this employee. The status
+  carries the DISPOSITION and the body carries the ANSWER, and neither is the
+  other. There is no `:ok` on it.
+- **A ledger entry names its `:op`.** An assessment record has no gross and no
+  period; rendered like a payroll run it would read as a payment of nothing.
 
-Twelve mutations measured across the store, the actor and the edge; all twelve
-redden, each in the tests that name the thing broken.
+Mutation coverage for this surface lives in `tools/mutations.edn`, whose header
+states what the table does and does **not** cover — a clean run means "every
+invariant listed there is measured", never "this actor is measured".
 
 ## Zero `:local/root`
 

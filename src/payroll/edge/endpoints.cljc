@@ -1,11 +1,13 @@
 (ns payroll.edge.endpoints
-  "The HTTP surface this payroll actor exposes — exactly four routes:
+  "The HTTP surface this payroll actor exposes — exactly five routes:
 
       POST /api/payroll-run             draft a payroll run
       GET  /api/payroll-run/:contract-id  the whole life of one contract's runs
       GET  /api/ledger                  the caller's own slice of the ledger
       POST /api/handoff                 what the ledger actor answered about
                                         runs this employer submitted
+      POST /api/year-end-adjustment     is a 年末調整 owed for one employee and
+                                        one year, and what can be computed
 
   and nothing else. Per `manifest/repository-rules.edn` an itonami actor is
   `:on-demand`: it answers a request and stops.
@@ -41,6 +43,16 @@
                            thief must also wait for a human to click. Wages
                            reach a bank because somebody signed
                                                                 → NOT exposed
+
+    :assess-year-end-adjustment
+                           moves no money and recomputes no arithmetic. It
+                           reads 所得税法 第百九十条 over registered facts and
+                           answers, and the governor has five HARD rules
+                           about it — four of which hold on an UNOBSERVED
+                           fact rather than a wrong one. It is the op whose
+                           whole output is what it refuses to say, so a
+                           socket that returns those refusals verbatim is the
+                           point of exposing it                    → exposed
 
     :reconcile-timesheets  writes a record that the governor recomputes
                            NOTHING for: `hard-violations` gates the contract
@@ -289,6 +301,37 @@
      :year-end-adjustment (or (get-in tax [:year-end-adjustment :taxlaw/coverage])
                               :not-assessed)}))
 
+(defn year-end-summary
+  "The verdict's `:nenmatsu` assessment reduced to a response body.
+
+  Every field is descriptive and **none of them reads as approval**. The
+  `:answer` is the nine-valued one `payroll.nenmatsu` documents; `:answerable?`
+  says whether it is an answer at all, so a reader who takes nothing else from
+  the body still cannot mistake `nobody registered the 申告書` for `no
+  adjustment is owed`.
+
+  `:amount` is present only where 第百九十条 reaches, and both of its
+  computable-looking fields are `:not-computable` with the unread table
+  named. A number here would be the most dangerous value this surface could
+  serve: it would arrive stamped with an article of the Income Tax Act and
+  nothing downstream could check it.
+
+  Returns `{:answer :not-assessed :answerable? false}` for a verdict that
+  carried no assessment — an op that never reached the article, or no verdict
+  at all. `not assessed` is not an answer either, and must not print as one."
+  [verdict]
+  (if-let [a (:nenmatsu verdict)]
+    (cond-> {:answer (:nenmatsu/answer a)
+             :answerable? (true? (:nenmatsu/answerable? a))
+             :jurisdiction (:nenmatsu/jurisdiction a)
+             :provision (:nenmatsu/provision a)
+             :why (:nenmatsu/why a)
+             :taxlaw-coverage (get-in a [:nenmatsu/taxlaw :taxlaw/coverage])
+             :evidence (:nenmatsu/evidence a)}
+      (:nenmatsu/amount a) (assoc :amount (:nenmatsu/amount a))
+      (:nenmatsu/settled-claim a) (assoc :settled-claim (:nenmatsu/settled-claim a)))
+    {:answer :not-assessed :answerable? false}))
+
 (defn- violation-summary [verdict]
   (mapv #(select-keys % [:rule :detail]) (:violations verdict)))
 
@@ -368,6 +411,126 @@
               :body (assoc base :violations (violation-summary verdict))})))))))
 
 ;; ---------------------------------------------------------------------------
+;; POST /api/year-end-adjustment
+;; ---------------------------------------------------------------------------
+
+(defn parse-year-end-body
+  "EDN request body -> `{:fields {…}}`, or `{:error \"…\"}`.
+
+  Read with `clojure.edn/read-string`, which evaluates nothing.
+
+  Structural only, and the ownership rule. What is admissible is the
+  governor's question and `payroll.nenmatsu`'s reading of 第百九十条, and
+  pre-empting either here would replace a cited refusal with an uncited 400.
+
+    :client-id &c  REFUSED. Whose payroll this is comes from the verified DID.
+    :year          a non-blank string. An assessment nobody can look up by
+                   year is not a record of one, and this actor will not pick
+                   a year on the caller's behalf.
+    :final-payment-of-year?        boolean when present. A STRING \"true\" is
+    :year-end-adjustment-settled?  not a declaration and must not read as one.
+                   `payroll.nenmatsu` already refuses to treat it as one — it
+                   normalises anything non-boolean to `nil`, which HOLDS — so
+                   this 400 is the caller-facing half of a guarantee that
+                   does not depend on it. Both halves exist because a caller
+                   who sent `\"true\"` deserves to be told, and a caller who
+                   bypasses this surface must still not get a pass.
+
+  `:contract-id` is deliberately NOT structural: absent is
+  `:no-assessment-contract`, unknown is `:unknown-contract`, another
+  employer's is `:contract-wrong-employer`. Three refusals, each naming what
+  was wrong, instead of one flat 400."
+  [s]
+  (let [m (try (edn/read-string s)
+               (catch #?(:clj Exception :cljs :default) _ nil))
+        boolish? (fn [k] (or (nil? (get m k)) (boolean? (get m k))))]
+    (cond
+      (not (map? m))
+      {:error "invalid request body"}
+
+      (some #(contains? m %) employer-naming-keys)
+      {:error (str "the employer is taken from the verified caller, not the"
+                   " request body")}
+
+      (not (and (string? (:year m)) (seq (.trim (:year m)))))
+      {:error "invalid request body"}
+
+      (not (boolish? :final-payment-of-year?))
+      {:error ":final-payment-of-year? must be true or false"}
+
+      (not (boolish? :year-end-adjustment-settled?))
+      {:error ":year-end-adjustment-settled? must be true or false"}
+
+      :else
+      {:fields (select-keys m [:contract-id :year :final-payment-of-year?
+                               :year-end-adjustment-settled? :stake])})))
+
+(defn assess-year-end-core!
+  "`POST /api/year-end-adjustment`. `caller-did` is already verified.
+
+    503  no allow-list configured
+    403  caller not on the allow-list
+    400  unparseable body, a body naming an employer, no `:year`, or a
+         non-boolean declaration
+    200  assessed  (`:disposition :commit`) — see `:year-end-adjustment`
+    202  awaiting a human (`:disposition :request-approval`)
+    409  held      (`:disposition :hold`), with the violations
+
+  **A 200 here is not an approval of anything.** It means the actor could
+  answer, and the answer is in the body. Five of the nine answers commit and
+  three of those five are the article NOT reaching this employee — `not the
+  final payment yet`, `no 申告書 filed`, `over 二千万円`. Collapsing that into
+  a boolean is the mistake this whole op exists to avoid, which is why the
+  status carries the DISPOSITION and the body carries the ANSWER, and neither
+  is the other.
+
+  The four answers that are the absence of an answer are HARD violations and
+  arrive as 409 with the rule named — an unread jurisdiction, an unobserved
+  申告書, an undeclared final payment, an undeclared jurisdiction.
+
+  The op is `:assess-year-end-adjustment` unconditionally and the employer
+  comes from the DID; neither is read from the body."
+  ([store mode allowlist caller-did raw-body]
+   (assess-year-end-core! store mode allowlist caller-did raw-body nil))
+  ([store mode allowlist caller-did raw-body advisor]
+   (cond
+     (nil? allowlist)
+     {:status 503 :body {:ok false :error "no allow-list configured"}}
+
+     (nil? (employer-for allowlist caller-did))
+     {:status 403 :body {:ok false :error "caller not permitted"}}
+
+     :else
+     (let [{:keys [fields error]} (parse-year-end-body raw-body)]
+       (if error
+         {:status 400 :body {:ok false :error error}}
+         (let [client-id (employer-for allowlist caller-did)
+               g (actor/build-graph (cond-> {:store store}
+                                      advisor (assoc :advisor advisor)))
+               r (actor/run-request! g (assoc fields
+                                              :client-id client-id
+                                              :op :assess-year-end-adjustment)
+                                     {} (str "edge-nenmatsu-" client-id "-"
+                                             (:contract-id fields) "-"
+                                             (:year fields)))
+               verdict (get-in r [:state :verdict])
+               disposition (get-in r [:state :disposition])
+               base {:employer client-id
+                     :contract-id (:contract-id fields)
+                     :year (:year fields)
+                     :store mode
+                     :disposition disposition
+                     :year-end-adjustment (year-end-summary verdict)}]
+           (case disposition
+             :commit {:status 200 :body base}
+             :request-approval {:status 202
+                                :body (assoc base
+                                             :awaiting :human-approval
+                                             :reason (:escalation-reason verdict))}
+             {:status 409
+              :body (assoc base :violations (violation-summary verdict))})))))))
+
+;; ---------------------------------------------------------------------------
 ;; GET /api/payroll-run/:contract-id
 ;; ---------------------------------------------------------------------------
 
@@ -417,6 +580,8 @@
                   :violations (violation-summary (:verdict latest))
                   :history (mapv #(hash-map :disposition (:disposition %)
                                             :period (:period %)
+                                            :year (:year %)
+                                            :op (get-in % [:record :op])
                                             :gross (get-in % [:record :payload :gross]))
                                  history)}})))))
 
@@ -456,11 +621,21 @@
               :scope :caller-only
               :count (count entries)
               :entries (mapv (fn [e]
+                               ;; `:op` and `:year` are on every entry because
+                               ;; a 年末調整 assessment commits a record with
+                               ;; no gross and no period. Without them it
+                               ;; would render as a payroll run that paid
+                               ;; nothing — the ledger's worst possible lie,
+                               ;; told about the op whose entire purpose is
+                               ;; not to invent figures.
                                {:contract-id (:contract-id e)
                                 :period (:period e)
+                                :year (:year e)
+                                :op (get-in e [:record :op])
                                 :disposition (:disposition e)
                                 :gross (get-in e [:record :payload :gross])
                                 :withholding (withholding-coverage (:verdict e))
+                                :year-end-adjustment (year-end-summary (:verdict e))
                                 :violations (violation-summary (:verdict e))})
                              entries)}})))
 
@@ -586,8 +761,8 @@
   A nil `mode` still serves 503 here rather than at the host, so the decision
   not to guess a storage backend is testable without a platform.
 
-  Having one dispatcher rather than three exported handlers is what makes
-  `there are exactly four routes` a testable claim instead of a sentence in a
+  Having one dispatcher rather than five exported handlers is what makes
+  `there are exactly five routes` a testable claim instead of a sentence in a
   README. A path nobody declared is 404 and a method nobody declared is 405 —
   distinct, because `POST /api/ledger` is a caller using the wrong verb on a
   real route and `POST /api/disburse` is a caller inventing one that this actor
@@ -604,6 +779,11 @@
       (= path "/api/handoff")
       (if (= method :post)
         (record-handoff-core! store allowlist caller-did body)
+        {:status 405 :body {:ok false :error "method not allowed" :allow [:post]}})
+
+      (= path "/api/year-end-adjustment")
+      (if (= method :post)
+        (assess-year-end-core! store mode allowlist caller-did body)
         {:status 405 :body {:ok false :error "method not allowed" :allow [:post]}})
 
       (= path "/api/ledger")

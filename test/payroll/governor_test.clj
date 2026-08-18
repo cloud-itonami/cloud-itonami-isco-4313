@@ -3,6 +3,7 @@
             [clojure.test :refer [deftest is testing]]
             [clojure.string]
             [kotoba.labor :as labor]
+            [payroll.nenmatsu :as nenmatsu]
             [payroll.store :as store]
             [payroll.governor :as governor]))
 
@@ -328,3 +329,234 @@
   (testing "the bump must not move the one jurisdiction that was working"
     (is (:ok? (governor/check {:client-id "emp-jp"} {}
                               (jp-proposal :income-tax-withheld 8420) (jp-store))))))
+
+;; ---------------------------------------------------------------------------
+;; 年末調整 — 所得税法 第百九十条, as a governed op
+;;
+;; taxlaw read and catalogued the article and nothing in this workspace called
+;; it. `:assess-year-end-adjustment` calls it. The point of these tests is
+;; that the new op HOLDS on everything unread and widens nothing: the draft
+;; path's verdicts are untouched, and four of the assessment's nine answers
+;; are HARD violations rather than a quiet commit.
+;; ---------------------------------------------------------------------------
+
+(defn- nen-store
+  "A JP employer, a contract that may or may not record the 申告書, and the
+  runs this actor has already committed for the year."
+  [& {:keys [jurisdiction declaration runs employer]
+      :or {jurisdiction [:jp] employer "emp-jp"}}]
+  (let [st (store/mem-store)]
+    (store/register-client! st (cond-> {:client-id employer :name "Hanako's Bakery"}
+                                 jurisdiction (assoc :jurisdiction jurisdiction)))
+    (store/register-contract!
+     st (cond-> (labor/contract "c-jp" "worker-1" employer "baker" :hourly 2000)
+          (some? declaration)
+          (assoc :employment/year-end-declaration-filed? declaration)))
+    (doseq [r (or runs [])] (store/commit-record! st r))
+    st))
+
+(defn- committed-run [& {:keys [period gross withheld]
+                         :or {period "2026-07" gross 280000 withheld 8420}}]
+  {:client-id "emp-jp" :op :draft-payroll-run :contract-id "c-jp"
+   :payload {:op :draft-payroll-run :period period :gross gross
+             :income-tax-withheld withheld}})
+
+(defn- nen-request [& {:as extra}]
+  (merge {:client-id "emp-jp" :op :assess-year-end-adjustment
+          :contract-id "c-jp" :year "2026"}
+         extra))
+
+(defn- nen-proposal [& {:as extra}]
+  ;; what `payroll.advisor/mock-advisor` actually produces for this op: the
+  ;; base proposal and nothing else.
+  (merge {:op :assess-year-end-adjustment :effect :propose
+          :confidence 0.95 :stake :low}
+         extra))
+
+(defn- nen-check [& {:keys [store request proposal]}]
+  (governor/check (or request (nen-request)) {}
+                  (or proposal (nen-proposal))
+                  (or store (nen-store :declaration true))))
+
+;; --- the answers that commit -----------------------------------------------
+
+(deftest a-fully-observed-year-end-question-is-answered-and-committed
+  (let [v (nen-check :request (nen-request :final-payment-of-year? true))]
+    (is (:ok? v))
+    (is (not (:hard? v)))
+    (is (= :owed (get-in v [:nenmatsu :nenmatsu/answer])))
+    (testing "and the committed answer still refuses to produce a figure"
+      (is (= :not-computable
+             (get-in v [:nenmatsu :nenmatsu/amount :nenmatsu/over-or-under]))))))
+
+(deftest not-yet-commits-and-is-not-a-finding-about-the-employee
+  (testing "「その年最後に給与等の支払をする場合」 may simply not have happened.
+            That is an instruction to come back, not a refusal, so it commits
+            — and it must not print as the same thing as disqualification"
+    (let [not-yet (nen-check :request (nen-request :final-payment-of-year? false))
+          never (nen-check :store (nen-store :declaration false)
+                           :request (nen-request :final-payment-of-year? true))]
+      (is (:ok? not-yet))
+      (is (:ok? never))
+      (is (= :year-not-finished (get-in not-yet [:nenmatsu :nenmatsu/answer])))
+      (is (= :declaration-not-filed (get-in never [:nenmatsu :nenmatsu/answer])))
+      (is (not= (get-in not-yet [:nenmatsu :nenmatsu/why])
+                (get-in never [:nenmatsu :nenmatsu/why]))))))
+
+(deftest the-ceiling-is-checked-against-what-this-actor-recorded
+  (testing "二千万円以下 — inclusive. And over is certain while under is not"
+    (let [at (nen-check :store (nen-store :declaration true
+                                          :runs [(committed-run :gross 20000000)])
+                        :request (nen-request :final-payment-of-year? true))
+          over (nen-check :store (nen-store :declaration true
+                                            :runs [(committed-run :gross 20000001)])
+                          :request (nen-request :final-payment-of-year? true))]
+      (is (= :owed (get-in at [:nenmatsu :nenmatsu/answer])))
+      (is (= :above-ceiling (get-in over [:nenmatsu :nenmatsu/answer])))
+      (is (:ok? over) "outside the article is an answer, not a refusal")
+      (is (false? (get-in over [:nenmatsu :nenmatsu/evidence :ceiling
+                                :nenmatsu/establishes-inside?]))))))
+
+;; --- the four answers that HOLD --------------------------------------------
+
+(deftest an-unobserved-declaration-is-held-never-passed
+  (testing "給与所得者の扶養控除等申告書 is a piece of paper. The same discipline
+            as `:yuryo-chobo-declared?` in the sibling bookkeeping actor:
+            undeclared is its own answer and it is not a pass"
+    (let [v (nen-check :store (nen-store) ; no :employment/year-end-declaration-filed?
+                       :request (nen-request :final-payment-of-year? true))]
+      (is (:hard? v))
+      (is (not (:ok? v)))
+      (is (some #(= :year-end-declaration-not-observed (:rule %)) (:violations v))))))
+
+(deftest an-undeclared-final-payment-is-held
+  (testing "this actor has no clock. `we do not know whether the year is over`
+            is not `the year is over`"
+    (let [v (nen-check)]
+      (is (:hard? v))
+      (is (some #(= :final-payment-not-declared (:rule %)) (:violations v))))))
+
+(deftest an-employer-with-no-jurisdiction-cannot-be-asked-a-question-of-law
+  (testing "rule 8 holds where rule 5 passes, on purpose: a DRAFT asserts
+            nothing, but an assessment ASKS whether an adjustment is owed and
+            that question has no answer without a jurisdiction"
+    (let [v (nen-check :store (nen-store :jurisdiction nil :declaration true)
+                       :request (nen-request :final-payment-of-year? true))]
+      (is (:hard? v))
+      (is (some #(= :year-end-jurisdiction-not-declared (:rule %)) (:violations v))))))
+
+(deftest a-jurisdiction-whose-year-end-facet-is-unread-is-held-with-its-reason
+  (doseq [[j fragment] [[[:us] "annual return"] [[:eu] "Member State law"]]]
+    (testing (pr-str j)
+      (let [v (nen-check :store (nen-store :jurisdiction j :declaration true)
+                         :request (nen-request :final-payment-of-year? true))
+            hit (first (filter #(= :unchecked-year-end-jurisdiction (:rule %))
+                               (:violations v)))]
+        (is (:hard? v))
+        (is (some? hit))
+        (is (= :jurisdiction/year-end-adjustment (:taxlaw/out-of-scope hit))
+            "the operator learns WHICH facet was missing")
+        (is (str/includes? (:detail hit) fragment)
+            "the catalog's own reason, not a generic `unknown country`")))))
+
+(deftest an-uncatalogued-jurisdiction-is-held-without-inventing-a-reason
+  (let [v (nen-check :store (nen-store :jurisdiction [:atlantis] :declaration true)
+                     :request (nen-request :final-payment-of-year? true))
+        hit (first (filter #(= :unchecked-year-end-jurisdiction (:rule %))
+                           (:violations v)))]
+    (is (:hard? v))
+    (is (nil? (:taxlaw/out-of-scope hit)))
+    (is (str/includes? (:detail hit) "kotoba.taxlaw に無い"))))
+
+(deftest every-nenmatsu-refusal-has-a-hard-rule
+  (testing "a refusal `payroll.nenmatsu` adds and this governor has not
+            classified would fall through to a commit. The map is checked
+            against the set rather than trusted"
+    (is (= nenmatsu/refusals (set (keys governor/refusal-rules))))
+    (is (not (contains? (set (vals governor/refusal-rules))
+                        :unclassified-year-end-refusal)))))
+
+(deftest no-confidence-buys-past-a-year-end-hold
+  (let [v (nen-check :store (nen-store)
+                     :request (nen-request :final-payment-of-year? true)
+                     :proposal (nen-proposal :confidence 0.99))]
+    (is (:hard? v))
+    (is (not (:escalate? v)))
+    (is (not (:ok? v)))))
+
+;; --- structural: an assessment must name an employee and a year ------------
+
+(deftest an-assessment-must-name-a-registered-contract-of-this-employer
+  (testing "three different failures, each naming what was wrong"
+    (let [none (nen-check :request (nen-request :contract-id nil
+                                                :final-payment-of-year? true))
+          unknown (nen-check :request (nen-request :contract-id "c-999"
+                                                   :final-payment-of-year? true))
+          foreign (nen-check :store (doto (nen-store :declaration true
+                                                     :employer "emp-other")
+                                      (store/register-client!
+                                       {:client-id "emp-jp" :name "Other"
+                                        :jurisdiction [:jp]}))
+                             :request (nen-request :final-payment-of-year? true))]
+      (is (some #(= :no-assessment-contract (:rule %)) (:violations none)))
+      (is (some #(= :unknown-contract (:rule %)) (:violations unknown)))
+      (is (some #(= :contract-wrong-employer (:rule %)) (:violations foreign)))
+      (doseq [v [none unknown foreign]] (is (:hard? v))))))
+
+(deftest an-assessment-must-name-a-year
+  (doseq [bad [nil "" "   "]]
+    (testing (pr-str bad)
+      (let [v (nen-check :request (nen-request :year bad
+                                               :final-payment-of-year? true))]
+        (is (:hard? v))
+        (is (some #(= :no-assessment-year (:rule %)) (:violations v)))))))
+
+;; --- the advisor is not the thing deciding ---------------------------------
+
+(deftest an-advisor-cannot-move-the-year-end-answer
+  (testing "an advisor that could name the contract would be the thing
+            deciding whose 年末調整 gets looked at, and one that could set the
+            declaration could file a piece of paper nobody signed"
+    (let [st (nen-store)                      ; the 申告書 is NOT registered
+          honest (nen-check :store st :request (nen-request :final-payment-of-year? true))
+          lying (nen-check :store st
+                           :request (nen-request :final-payment-of-year? true)
+                           :proposal (nen-proposal
+                                      :contract-id "c-jp"
+                                      :year "2026"
+                                      :employment/year-end-declaration-filed? true
+                                      :final-payment-of-year? true
+                                      :year-end-adjustment-settled? true
+                                      :jurisdiction [:atlantis]))]
+      (is (= (:nenmatsu honest) (:nenmatsu lying))
+          "the assessment is identical; nothing the advisor wrote was read")
+      (is (:hard? lying))
+      (is (some #(= :year-end-declaration-not-observed (:rule %))
+                (:violations lying))))))
+
+(deftest a-non-boolean-declaration-does-not-buy-a-pass-through-the-governor
+  (testing "the edge refuses a string with a 400, and this is the half of the
+            guarantee that does not depend on the edge"
+    (doseq [bad ["true" :yes 1]]
+      (testing (pr-str bad)
+        (is (:hard? (nen-check :store (nen-store :declaration bad)
+                               :request (nen-request :final-payment-of-year? true))))
+        (is (:hard? (nen-check :request (nen-request :final-payment-of-year? bad))))))))
+
+;; --- adding the op widened nothing ------------------------------------------
+
+(deftest the-draft-path-still-reports-year-end-as-not-evaluated
+  (testing "a payroll-run draft still asserts nothing about the year's final
+            payment, so the article is still not evaluated there — and the
+            verdict still says so rather than falling silent"
+    (let [v (governor/check {:client-id "emp-jp"} {}
+                            (jp-proposal :income-tax-withheld 8420) (jp-store))]
+      (is (:ok? v))
+      (is (= :not-evaluated (get-in v [:tax :year-end-adjustment :taxlaw/coverage])))
+      (is (nil? (:nenmatsu v)) "and carries no assessment"))))
+
+(deftest an-assessment-verdict-carries-no-withholding-report
+  (testing "an assessment asserts no payment of 給与等, so there is nothing for
+            第百八十三条第一項 to answer about"
+    (let [v (nen-check :request (nen-request :final-payment-of-year? true))]
+      (is (nil? (:tax v))))))

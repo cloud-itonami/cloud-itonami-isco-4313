@@ -7,15 +7,58 @@
 ;;
 ;; ## SCOPE — this table does not cover the whole repository
 ;;
-;; It covers `POST /api/handoff` — the route that brings back what
-;; `cloud-itonami-isco-4311` did with a payroll run this actor emitted, and
-;; the only thing that makes `payroll.handoff` reachable from anywhere. The
-;; governor, the advisor, the store, `payroll.shiwake` and the pure
-;; `payroll.handoff` all have suites but no mutations here, so a clean run of
-;; this table means "every invariant of the hand-off ROUTE is measured" and
-;; NOT "every invariant of this actor is measured". Reading it as the second
-;; would be exactly the defect the harness exists to catch: a check that did
-;; not look reporting the same value as one that looked and found nothing.
+;; It covers exactly three things:
+;;
+;;   1. `POST /api/handoff` — the route that brings back what
+;;      `cloud-itonami-isco-4311` did with a payroll run this actor emitted,
+;;      and the only thing that makes `payroll.handoff` reachable at all.
+;;   2. The 源泉徴収 hold's EXPLANATION (rules 5 and 6 of `payroll.governor`),
+;;      after taxlaw gained `[:eu]` and `[:us]`.
+;;   3. 年末調整 — `payroll.nenmatsu`, the `:assess-year-end-adjustment` rules
+;;      in `payroll.governor`, its route, and the two places its records had
+;;      to become legible in the ledger (added 2026-08-18).
+;;
+;; What is NOT covered, and would be measured by nothing if this table were
+;; read as a whole-repo verdict: the wage/net arithmetic rules, the advisor,
+;; both store backends, `payroll.shiwake`, the pure `payroll.handoff`, and
+;; `POST /api/payroll-run`'s own body parsing. All of those have suites; none
+;; of those suites has been shown here to be capable of failing. A clean run
+;; means "every invariant LISTED BELOW is measured", never "this actor is
+;; measured" — reading it as the second would be exactly the defect the
+;; harness exists to catch: a check that did not look reporting the same
+;; value as one that looked and found nothing.
+;;
+;; ## Two entries were REMOVED, and why
+;;
+;; ### `:the-taxlaw-pin-carries-the-two-new-jurisdictions` (removed 2026-08-18)
+;;
+;; It rolled the `taxlaw` pin back to `a4a68050` and, until 年末調整 landed, it
+;; KILLED — the `[:eu]`/`[:us]` withholding tests went red. It now reports
+;; **UNMEASURED**: `payroll.nenmatsu` calls `taxlaw/facet-of`, which
+;; `a4a68050` does not have, so the rollback breaks the READER and the suite
+;; never runs. Per this harness's own rule a mutation that breaks the build
+;; demonstrates the build, not an invariant, and must be fixed rather than
+;; scored.
+;;
+;; The property it was measuring did not disappear — it got louder. A stale
+;; pin is now caught by the code failing to COMPILE, which is a harder signal
+;; than a red test, and the pin's CONTENT is asserted directly by
+;; `payroll.nenmatsu-test/a-jurisdiction-whose-year-end-facet-was-not-read-is-refused`,
+;; which reads `taxlaw/requires-year-end-adjustment?` for `[:us]` and `[:eu]`
+;; out of the dependency itself. `:the-year-end-facet-is-the-one-taxlaw-carries`
+;; below measures the same seam from inside this repo, and compiles.
+;;
+;; ### `:the-ceiling-is-read-from-taxlaw-not-typed`
+;;
+;; It replaced
+;; `(:rule/income-ceiling-yen (taxlaw/facet-of jurisdiction facet))` with the
+;; literal `20000000` and SURVIVED — correctly. The only catalogued
+;; 年末調整 facet is `[:jp]`, whose ceiling IS 20,000,000, so no test can
+;; distinguish the two and none should pretend to. The property is instead
+;; measured from the other side by `:the-ceiling-is-actually-read`, which
+;; makes the lookup return nil and reddens. Recorded here rather than deleted
+;; silently: dropping a mutation to clean a table is the thing this harness
+;; exists to prevent, so a drop has to say why.
 [{:id :handoff-is-routed
   :invariant "the route exists — without it the reconciliation reaches nothing"
   :file "src/payroll/edge/endpoints.cljc"
@@ -131,8 +174,225 @@
   :find "                       (str \"employer が法域 \" (pr-str juris)\n                            \" を宣言しているが kotoba.taxlaw に無い\""
   :replace "                       (str \"employer が法域 \" (pr-str juris)\n                            \" を宣言しているが検査できない\""}
 
- {:id :the-taxlaw-pin-carries-the-two-new-jurisdictions
-  :invariant "the bump is measured, not assumed"
-  :file "deps.edn"
-  :find "\"d2663b54aad645244e61ae548054943b1229c1fc\""
-  :replace "\"a4a68050e30622dd92990dcdab94038a07d46998\""}]
+ ;; --- 年末調整, 所得税法 第百九十条 (2026-08-18) -----------------------------
+ ;;
+ ;; taxlaw had read the article and NOTHING in this workspace called it. The
+ ;; risk in acting on it is not that a run gets wrongly refused — the
+ ;; assessment moves no money — but that the actor produces a NUMBER. The
+ ;; year's correct tax comes from 別表 (税額表), which taxlaw records as
+ ;; unread, so a figure here would arrive stamped with an article of the
+ ;; Income Tax Act and nothing downstream could check it. Most of what
+ ;; follows breaks a refusal and expects a test to notice.
+
+ {:id :the-over-under-is-never-computed
+  :invariant "第百九十条's over/under is not computable from anything read here"
+  :file "src/payroll/nenmatsu.cljc"
+  :find ":nenmatsu/over-or-under :not-computable"
+  :replace ":nenmatsu/over-or-under (- withheld-recorded 0)"}
+
+ {:id :the-years-tax-is-never-computed
+  :invariant "and neither is the year's correct tax — 別表 was not read"
+  :file "src/payroll/nenmatsu.cljc"
+  :find ":nenmatsu/annual-tax :not-computable"
+  :replace ":nenmatsu/annual-tax 0"}
+
+ {:id :the-unread-table-is-named
+  :invariant "the refusal names WHICH table nobody read, read off taxlaw"
+  :file "src/payroll/nenmatsu.cljc"
+  :find "   (:rule/amount-source-not-read\n    (taxlaw/facet-of jurisdiction :jurisdiction/wage-withholding))"
+  :replace "   (:rule/no-such-key\n    (taxlaw/facet-of jurisdiction :jurisdiction/wage-withholding))"}
+
+ {:id :the-recorded-sums-are-this-actors-own
+  :invariant "wages recorded here are not 「その年中に…確定した給与等の金額」"
+  :file "src/payroll/nenmatsu.cljc"
+  :find ":nenmatsu/records-are-this-actors-only? true"
+  :replace ":nenmatsu/records-are-this-actors-only? false"}
+
+ {:id :the-ceiling-is-inclusive
+  :invariant "二千万円以下 — at exactly 20,000,000 the employee is INSIDE"
+  :file "src/payroll/nenmatsu.cljc"
+  :find "(and (number? ceiling) (pos? run-count) (> wages ceiling)) :above-ceiling"
+  :replace "(and (number? ceiling) (pos? run-count) (>= wages ceiling)) :above-ceiling"}
+
+ {:id :the-ceiling-is-actually-read
+  :invariant "the ceiling comes from taxlaw; a lookup that returns nothing must not silently stop checking"
+  :file "src/payroll/nenmatsu.cljc"
+  :find "ceiling (:rule/income-ceiling-yen (taxlaw/facet-of jurisdiction facet))"
+  :replace "ceiling (:rule/no-such-ceiling (taxlaw/facet-of jurisdiction facet))"}
+
+ {:id :under-the-recorded-ceiling-establishes-nothing
+  :invariant "unseen wages only ADD, so `over` is certain and `under` is not"
+  :file "src/payroll/nenmatsu.cljc"
+  :find ":nenmatsu/establishes-inside? false"
+  :replace ":nenmatsu/establishes-inside? true"}
+
+ {:id :an-empty-record-is-not-zero-wages
+  :invariant "no recorded runs is an empty record, never a fact about wages"
+  :file "src/payroll/nenmatsu.cljc"
+  :find ":no-runs-recorded? (zero? run-count)"
+  :replace ":no-runs-recorded? false"}
+
+ {:id :an-unobserved-declaration-is-not-an-unfiled-one
+  :invariant "software cannot see a piece of paper; unseen is not `not filed`"
+  :file "src/payroll/nenmatsu.cljc"
+  :find "(nil? declaration) :declaration-not-observed"
+  :replace "(nil? declaration) :declaration-not-filed"}
+
+ {:id :a-string-is-not-a-declaration
+  :invariant "`\"true\"` satisfies neither nil? nor false? and would fall through to :owed"
+  :file "src/payroll/nenmatsu.cljc"
+  :find "  (when (boolean? x) x))"
+  :replace "  (when (some? x) x))"}
+
+ {:id :not-yet-and-never-are-different-answers
+  :invariant "`come back after the last payslip` is not `this employee does not qualify`"
+  :file "src/payroll/nenmatsu.cljc"
+  :find "(false? final?) :year-not-finished"
+  :replace "(false? final?) :declaration-not-filed"}
+
+ {:id :an-undeclared-jurisdiction-is-not-an-uncatalogued-one
+  :invariant "`nobody said where` and `nobody read there` are different refusals"
+  :file "src/payroll/nenmatsu.cljc"
+  :find "(nil? jurisdiction) :jurisdiction-not-declared"
+  :replace "(nil? :never) :jurisdiction-not-declared"}
+
+ {:id :a-refusal-is-not-an-answer
+  :invariant ":answerable? must not report an absence of an answer as one"
+  :file "src/payroll/nenmatsu.cljc"
+  :find ":nenmatsu/answerable? (contains? answers answer)"
+  :replace ":nenmatsu/answerable? (some? answer)"}
+
+ {:id :a-settlement-claim-is-not-a-verified-settlement
+  :invariant "this actor cannot verify an amount it did not read a table for"
+  :file "src/payroll/nenmatsu.cljc"
+  :find "              :verified? false"
+  :replace "              :verified? true"}
+
+ {:id :an-assessment-record-is-not-a-payroll-run
+  :invariant "counting one as wages would inflate the figure the ceiling tests"
+  :file "src/payroll/nenmatsu.cljc"
+  :find "(= :draft-payroll-run (:op r))"
+  :replace "(some? (:op r))"}
+
+ {:id :another-years-run-is-not-this-years-wages
+  :invariant "the period must name the year being assessed"
+  :file "src/payroll/nenmatsu.cljc"
+  :find "(str/starts-with? (str (get-in r [:payload :period])) (str year))"
+  :replace "(str/starts-with? (str (get-in r [:payload :period])) \"\")"}
+
+ {:id :another-contracts-run-is-not-this-employees-wages
+  :invariant "and so must the contract"
+  :file "src/payroll/nenmatsu.cljc"
+  :find "(= contract-id (:contract-id r))"
+  :replace "(some? (:contract-id r))"}
+
+ {:id :a-nenmatsu-refusal-is-a-hard-violation
+  :invariant "four of the nine answers are the ABSENCE of one; none may commit"
+  :file "src/payroll/governor.cljc"
+  :find "       (contains? nenmatsu/refusals answer)"
+  :replace "       (contains? #{} answer)"}
+
+ {:id :the-assessed-contract-is-the-requests-not-the-proposals
+  :invariant "an advisor must not be the thing deciding whose 年末調整 is looked at"
+  :file "src/payroll/governor.cljc"
+  :find "        assess-contract (when assess?\n                          (some->> (:contract-id request)"
+  :replace "        assess-contract (when assess?\n                          (some->> (:contract-id proposal)"}
+
+ {:id :an-assessment-must-name-a-year
+  :invariant "a blank year is not a year; an assessment nobody can look up is not one"
+  :file "src/payroll/governor.cljc"
+  :find "       (not (nenmatsu/named? (:year request)))"
+  :replace "       (not (some? (:year request)))"}
+
+ {:id :the-year-reaches-the-assessment
+  :invariant "the year the request named is the year that is assessed"
+  :file "src/payroll/governor.cljc"
+  :find "                       :year (:year request)"
+  :replace "                       :year nil"}
+
+ {:id :the-assessment-reads-this-employers-records
+  :invariant "the ceiling is tested against records, not against an empty list"
+  :file "src/payroll/governor.cljc"
+  :find "(store/records-of store (:client-id request))"
+  :replace "[]"}
+
+ {:id :the-year-end-jurisdiction-is-the-employers
+  :invariant "the employer's jurisdiction, never one the request could choose"
+  :file "src/payroll/governor.cljc"
+  :find "                      {:jurisdiction juris\n                       :contract assess-contract"
+  :replace "                      {:jurisdiction (:jurisdiction request)\n                       :contract assess-contract"}
+
+ {:id :the-uncatalogued-facet-is-forwarded
+  :invariant "an operator learns WHICH facet the catalog is missing"
+  :file "src/payroll/governor.cljc"
+  :find "               (assoc :taxlaw/out-of-scope\n                      (:taxlaw/out-of-scope (:nenmatsu/taxlaw assessment)))"
+  :replace "               (assoc :taxlaw/out-of-scope\n                      nil)"}
+
+ {:id :the-ledger-stamp-carries-the-year
+  :invariant "an assessment has no period; without the year it cannot be attributed"
+  :file "src/payroll/actor.cljc"
+  :find "    (some? (:year request)) (assoc :year (:year request))))"
+  :replace "    (some? nil) (assoc :year (:year request))))"}
+
+ {:id :the-year-end-route-is-routed
+  :invariant "the route exists — without it the reading of 第百九十条 reaches nothing"
+  :file "src/payroll/edge/endpoints.cljc"
+  :find "(= path \"/api/year-end-adjustment\")"
+  :replace "(= path \"/api/year-end-adjustment-disabled\")"}
+
+ {:id :the-year-end-route-needs-an-allowlist
+  :invariant "an unconfigured deployment is 503, not an open endpoint"
+  :file "src/payroll/edge/endpoints.cljc"
+  :find "     (nil? allowlist)\n     {:status 503 :body {:ok false :error \"no allow-list configured\"}}\n\n     (nil? (employer-for allowlist caller-did))\n     {:status 403 :body {:ok false :error \"caller not permitted\"}}\n\n     :else\n     (let [{:keys [fields error]} (parse-year-end-body raw-body)]"
+  :replace "     (nil? nil)\n     {:status 503 :body {:ok false :error \"no allow-list configured\"}}\n\n     (nil? (employer-for allowlist caller-did))\n     {:status 403 :body {:ok false :error \"caller not permitted\"}}\n\n     :else\n     (let [{:keys [fields error]} (parse-year-end-body raw-body)]"}
+
+ {:id :the-year-end-route-refuses-an-unlisted-caller
+  :invariant "an unlisted DID cannot ask about anyone's 年末調整"
+  :file "src/payroll/edge/endpoints.cljc"
+  :find "     (nil? (employer-for allowlist caller-did))\n     {:status 403 :body {:ok false :error \"caller not permitted\"}}\n\n     :else\n     (let [{:keys [fields error]} (parse-year-end-body raw-body)]"
+  :replace "     (nil? nil)\n     {:status 403 :body {:ok false :error \"caller not permitted\"}}\n\n     :else\n     (let [{:keys [fields error]} (parse-year-end-body raw-body)]"}
+
+ {:id :the-year-end-body-cannot-name-an-employer
+  :invariant "whose 年末調整 this is comes from the verified DID"
+  :file "src/payroll/edge/endpoints.cljc"
+  :find "      (some #(contains? m %) employer-naming-keys)\n      {:error (str \"the employer is taken from the verified caller, not the\"\n                   \" request body\")}\n\n      (not (and (string? (:year m)) (seq (.trim (:year m)))))"
+  :replace "      (some #(contains? #{} %) employer-naming-keys)\n      {:error (str \"the employer is taken from the verified caller, not the\"\n                   \" request body\")}\n\n      (not (and (string? (:year m)) (seq (.trim (:year m)))))"}
+
+ {:id :a-non-boolean-declaration-is-refused-at-the-edge
+  :invariant "a string is not a declaration, and the caller who sent one is told"
+  :file "src/payroll/edge/endpoints.cljc"
+  :find "        boolish? (fn [k] (or (nil? (get m k)) (boolean? (get m k))))"
+  :replace "        boolish? (fn [k] (or (nil? (get m k)) (some? (get m k))))"}
+
+ {:id :not-assessed-is-not-an-answer
+  :invariant "a verdict that carried no assessment must not print as answerable"
+  :file "src/payroll/edge/endpoints.cljc"
+  :find "    {:answer :not-assessed :answerable? false}))"
+  :replace "    {:answer :not-assessed :answerable? true}))"}
+
+ {:id :the-ledger-names-the-op
+  :invariant "an assessment record must not render as a payroll run that paid nothing"
+  :file "src/payroll/edge/endpoints.cljc"
+  :find "                                :op (get-in e [:record :op])"
+  :replace "                                :op nil"}
+
+ {:id :the-contract-history-names-the-op
+  :invariant "and neither must it in one contract's run history"
+  :file "src/payroll/edge/endpoints.cljc"
+  :find "                                            :op (get-in % [:record :op])"
+  :replace "                                            :op nil"}
+
+ ;; --- what replaced the pin mutation. Both of these name something about the
+ ;; PINNED taxlaw and both compile, which the pin rollback no longer does. ---
+
+ {:id :the-year-end-facet-is-the-one-taxlaw-carries
+  :invariant "the facet this repo names is the facet the pinned catalog holds"
+  :file "src/payroll/nenmatsu.cljc"
+  :find "  :jurisdiction/year-end-adjustment)"
+  :replace "  :jurisdiction/year-end-adjustment-v2)"}
+
+ {:id :the-catalogs-own-reason-reaches-the-operator
+  :invariant "`the US has no year-end adjustment` is not `we never heard of the US`"
+  :file "src/payroll/nenmatsu.cljc"
+  :find "                             (or (:taxlaw/why law)"
+  :replace "                             (or nil"}]

@@ -41,12 +41,20 @@
   proposal, which an advisor writes.
 
   A held run may cite no contract at all; `:contract-id` is then nil and
-  `payroll.store/run-history` deliberately refuses to match nil against nil."
+  `payroll.store/run-history` deliberately refuses to match nil against nil.
+
+  `:year` is carried when the request has one, which is what
+  `:assess-year-end-adjustment` is identified by. That op has no `:period`,
+  so without this a 年末調整 entry in the ledger could not name the year it
+  assessed — and an assessment nobody can attribute to a year is not one.
+  The key is absent rather than nil on the ops that have no year, so a reader
+  counting years is not handed one."
   [request entry]
-  (assoc entry
-         :client-id (:client-id request)
-         :contract-id (:contract-id request)
-         :period (:period request)))
+  (cond-> (assoc entry
+                 :client-id (:client-id request)
+                 :contract-id (:contract-id request)
+                 :period (:period request))
+    (some? (:year request)) (assoc :year (:year request))))
 
 (defn build-graph
   "Build a compiled PayrollActor graph. `store` implements

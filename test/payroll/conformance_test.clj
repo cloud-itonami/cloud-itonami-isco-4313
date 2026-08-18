@@ -12,6 +12,7 @@
   disposition this actor has."
   (:require [clojure.test :refer [deftest is testing]]
             [kotoba.labor :as labor]
+            [payroll.nenmatsu :as nenmatsu]
             [payroll.store :as store]
             [payroll.governor :as governor]
             [governor.core :as gov]))
@@ -39,6 +40,14 @@
                 :employment/paid-in :overseas}))
     (store/register-contract!
      st (labor/contract "c-atl" "worker-1" "emp-atl" "baker" :hourly 2000))
+    ;; the one contract on which the 申告書 is actually registered. Every other
+    ;; contract here leaves it unobserved, which is itself a case: an
+    ;; assessment against any of them must HOLD.
+    (store/register-contract!
+     st (merge (labor/contract "c-jp-nen" "worker-1" "emp-jp" "baker" :hourly 2000)
+               {:employment/recipient-residency :resident
+                :employment/paid-in :domestic
+                :employment/year-end-declaration-filed? true}))
     (store/register-timesheet! st (labor/timesheet "worker-1" "2026-07-01" 8))
     (store/register-timesheet! st (labor/timesheet "worker-1" "2026-07-02" 6))
     st))
@@ -48,6 +57,12 @@
   {:op :draft-payroll-run :effect :propose :contract-id "c-1"
    :period "2026-07" :gross 28000 :deductions 3000 :net 25000
    :confidence 0.9 :stake :low})
+
+(def ^:private nen
+  "What `payroll.advisor/mock-advisor` produces for the assessment op: the
+  base proposal and nothing else. Carrying no contract and no facts is the
+  property, not an omission."
+  {:op :assess-year-end-adjustment :effect :propose :confidence 0.95 :stake :low})
 
 (def ^:private cases
   [{:name :clean :request {:client-id "emp-1"} :proposal clean}
@@ -101,7 +116,44 @@
     :proposal (assoc clean :contract-id "c-jp" :income-tax-withheld 8420)}
 
    {:name :ok/outside-the-read-article :request {:client-id "emp-jp"}
-    :proposal (assoc clean :contract-id "c-jp-nr")}])
+    :proposal (assoc clean :contract-id "c-jp-nr")}
+
+   ;; --- 年末調整 (所得税法 第百九十条) ----------------------------------------
+   ;;
+   ;; The assessment op reads its contract and its three condition facts off
+   ;; the REQUEST and the REGISTERED contract, never off the proposal, so
+   ;; these cases carry a full request and a bare proposal — which is exactly
+   ;; what `payroll.advisor/mock-advisor` produces for this op.
+   {:name :hard/year-end-declaration-not-observed
+    :request {:client-id "emp-jp" :contract-id "c-jp" :year "2026"
+              :final-payment-of-year? true}
+    :proposal nen}
+
+   {:name :hard/final-payment-not-declared
+    :request {:client-id "emp-jp" :contract-id "c-jp-nen" :year "2026"}
+    :proposal nen}
+
+   {:name :hard/unchecked-year-end-jurisdiction
+    :request {:client-id "emp-atl" :contract-id "c-atl" :year "2026"
+              :final-payment-of-year? true}
+    :proposal nen}
+
+   {:name :hard/year-end-jurisdiction-not-declared
+    :request {:client-id "emp-1" :contract-id "c-1" :year "2026"
+              :final-payment-of-year? true}
+    :proposal nen}
+
+   {:name :ok/year-end-owed
+    :request {:client-id "emp-jp" :contract-id "c-jp-nen" :year "2026"
+              :final-payment-of-year? true}
+    :proposal nen}
+
+   ;; `not yet` is a pass and `never` is a pass, and they are different
+   ;; passes. Both belong here for the reason the two withholding passes do.
+   {:name :ok/year-not-finished
+    :request {:client-id "emp-jp" :contract-id "c-jp-nen" :year "2026"
+              :final-payment-of-year? false}
+    :proposal nen}])
 
 (defn- verdict-for [{:keys [request proposal]}]
   (governor/check request {} proposal (fresh-store)))
@@ -127,8 +179,8 @@
   ;; evidence floor: a conformance suite whose cases all landed in one
   ;; disposition would pass while checking almost nothing.
   (let [vs (map verdict-for cases)]
-    (is (>= (count (filter :ok? vs)) 3) "no clean case")
-    (is (>= (count (filter :hard? vs)) 9) "HARD rules under-covered")
+    (is (>= (count (filter :ok? vs)) 5) "no clean case")
+    (is (>= (count (filter :hard? vs)) 13) "HARD rules under-covered")
     (is (>= (count (filter :escalate? vs)) 3) "escalation under-covered")))
 
 (deftest every-non-hold-tax-case-says-what-was-not-checked
@@ -162,3 +214,30 @@
           :when (:escalate? v)]
     (testing (str name)
       (is (some? (:escalation-reason v))))))
+
+(deftest every-year-end-answer-is-either-answered-or-held
+  ;; The same device as `every-non-hold-tax-case-says-what-was-not-checked`,
+  ;; one article over. Four of the assessment's nine answers are the ABSENCE
+  ;; of an answer, and every one of them must be a HOLD — an assessment that
+  ;; committed while saying `nobody registered the 申告書` would be the
+  ;; unevaluated-rule defect wearing the evaluated rule's clothes.
+  (doseq [{:keys [name] :as c} cases
+          :let [v (verdict-for c)]
+          :when (:nenmatsu v)]
+    (testing (str name)
+      (let [answer (get-in v [:nenmatsu :nenmatsu/answer])]
+        (is (some? answer))
+        (is (= (:hard? v) (contains? nenmatsu/refusals answer))
+            "answerable ⇔ not held, in both directions")
+        (is (= (:nenmatsu/answerable? (:nenmatsu v))
+               (contains? nenmatsu/answers answer)))))))
+
+(deftest the-year-end-cases-cover-both-sides
+  ;; evidence floor: a set of assessment cases that all landed on one side
+  ;; would pass while measuring nothing.
+  (let [vs (keep :nenmatsu (map verdict-for cases))
+        answers (map :nenmatsu/answer vs)]
+    (is (>= (count vs) 6) "assessment cases under-covered")
+    (is (>= (count (filter nenmatsu/refusals answers)) 4)
+        "every refusal must appear, or the ⇔ above is half-tested")
+    (is (>= (count (filter nenmatsu/answers answers)) 2))))
