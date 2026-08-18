@@ -48,9 +48,25 @@
                               different answer (`:year-not-finished`) that
                               commits, because `not yet` is not `never`.
 
+  HARD invariants for :draft-payroll-run (社会保険・労働保険, see below):
+   12. catalogued social insurance — a draft run for an employer that declares
+                              a jurisdiction whose 社会保険 `payroll.shakai-hoken`
+                              has not read is HELD. Unread is not absent, and
+                              here that is the expensive direction: the United
+                              States and every EU member state DO levy social
+                              insurance on wages.
+   13. observed coverage and base — whether this worker is a 被保険者 of each
+                              scheme, and what 標準報酬月額 the 保険者 decided
+                              for which month, are facts an operator registers.
+                              Unregistered is HELD, and is its own answer.
+   14. accounted-for contributions — a run that accounts for 所得税 and says
+                              nothing about 健康保険料 / 介護保険料 /
+                              厚生年金保険料 / 雇用保険料 is HELD. **:ok? true
+                              stopped meaning `one of four` on 2026-08-18.**
+
   ESCALATION invariants (:escalate? true, human sign-off):
-   12. :op :disburse-wages  (real fund movement — always human).
-   13. low confidence (< `confidence-floor`).
+   15. :op :disburse-wages  (real fund movement — always human).
+   16. low confidence (< `confidence-floor`).
 
   ## What is this actor's, and what is the fleet's
 
@@ -114,6 +130,50 @@
       leaves no trace is indistinguishable from a satisfied one. That record
       is unchanged. What is new is a SEPARATE op that evaluates it.
 
+  ## 社会保険・労働保険 (rules 12-14) — the other three quarters of a payslip
+
+  Until 2026-08-18 this governor gated ONE withholding. A Japanese payslip
+  carries four, and a payroll actor that accounts for one of four and reports
+  the run as committed is the shape this repository exists to refuse. It was
+  doing exactly that, and `:ok? true` meant `one of four`.
+
+  The reading is `payroll.shakai-hoken`'s — 健康保険法 第百六十七条第一項 /
+  第百六十一条第一項 / 第四十条第一項 / 第四十一条第一項 / 第百六十条第一項・
+  第十六項 / 第百五十六条第一項第一号, 厚生年金保険法 第八十四条第一項 /
+  第八十二条第一項 / 第八十一条第三項・第四項 / 第二十条第一項 / 第二十一条第一項,
+  介護保険法 第九条第二号, 労働保険徴収法 第三十二条第一項 / 第三十一条第一項第一号・
+  第三項 / 第十二条第二項・第四項, and 国等の債権債務等の金額の端数計算に関する法律
+  第二条第一項 — all read from the e-Gov law API v2 on 2026-08-18 and quoted
+  verbatim there. What is HERE is only which of that namespace's refusals is a
+  hold, exactly as rules 7-11 are for `payroll.nenmatsu`.
+
+  Three things are worth stating about the shape, because each was a decision:
+
+  - **The verdict changed, and a hold is what it changed to.** The other
+    options were an escalation or a named incompleteness on an otherwise-ok
+    verdict. A named incompleteness loses, and concretely: `payroll.shiwake`
+    keys off `:disposition :commit`, so an `:ok?` run with three unanswered
+    contributions would become a journal entry whose 預り金 line is missing
+    them — wages nobody's books show and withholding nobody's books owe,
+    which is the failure that namespace exists to prevent. An escalation
+    loses for rule 6's reason: a human cannot sign off on a figure nobody
+    computed, and inviting them to would make the queue the place unanswered
+    questions go to become answered ones.
+
+  - **It fires on the same asserted condition rules 5 and 6 do** — a
+    `:draft-payroll-run` whose EMPLOYER RECORD declares a `:jurisdiction`. A
+    run for an employer that declares none is still not held, and `:extra`
+    still says so. Widening that would be a separate decision with its own
+    evidence.
+
+  - **It does not fire when there is no registered contract.** Rule 3 already
+    holds such a run, and four further violations about the coverage of a
+    contract that does not exist would bury the one that matters.
+
+  Non-JP does not widen: `[:eu]` and `[:us]` answer `:not-catalogued`, which
+  is a REFUSAL here, so those runs gain a second reason to be held and lose
+  none. The US payroll run this suite has always held is still held.
+
   ## 年末調整 (rules 7-11) — a question asked, not a run checked
 
   所得税法 第百九十条 was read from source and catalogued in `kotoba.taxlaw`
@@ -146,6 +206,7 @@
   (:require [kotoba.labor :as labor]
             [kotoba.taxlaw :as taxlaw]
             [payroll.nenmatsu :as nenmatsu]
+            [payroll.shakai-hoken :as hoken]
             [payroll.store :as store]
             [governor.core :as gov]))
 
@@ -172,12 +233,55 @@
    :paid-in (:employment/paid-in contract-record)
    :income-tax-withheld (:income-tax-withheld proposal)})
 
+(def hoken-refusal-rules
+  "Which HARD rule each `payroll.shakai-hoken` refusal becomes.
+
+  Driven off `hoken/refusals` rather than off a `cond` here, for
+  `refusal-rules`' reason: a refusal that namespace adds and this map has not
+  classified is caught by
+  `payroll.governor-test/every-shakai-hoken-refusal-has-a-hard-rule` instead
+  of silently committing. Adding an answer must not widen a pass."
+  {:not-catalogued :unchecked-social-insurance-jurisdiction
+   :coverage-not-observed :social-insurance-coverage-not-observed
+   :standard-remuneration-not-observed :standard-remuneration-not-observed
+   :standard-remuneration-month-not-observed :standard-remuneration-month-not-observed
+   :rate-period-not-read :social-insurance-rate-period-not-read
+   :not-accounted-for :social-insurance-not-accounted-for
+   :malformed-amount :social-insurance-malformed-amount
+   :amount-contradicts-statutory-rate :social-insurance-amount-contradicts-statutory-rate})
+
+(defn- social-insurance-violations
+  "One HARD violation per refused scheme, plus one for a jurisdiction whose
+  social insurance nobody read.
+
+  Every detail names the scheme, the article that authorises the deduction,
+  the reason, and — where the refusal is a missing input — the exact key an
+  operator has to register. `見ていない` on its own is not an instruction."
+  [assessment]
+  (vec (for [{:keys [scheme answer label provision why missing]}
+             (:shakai-hoken/refusals assessment)]
+         (cond-> {:rule (get hoken-refusal-rules answer
+                             :unclassified-social-insurance-refusal)
+                  :shakai-hoken/answer answer
+                  :detail (cond-> (str (when label (str label "（" provision "）: "))
+                                       why)
+                            missing (str "。登録が要る: " (pr-str missing)))}
+           scheme (assoc :shakai-hoken/scheme scheme)))))
+
 (defn- hard-violations [{:keys [request proposal]} client-record contract-record store]
   (let [{:keys [op contract-id gross deductions net]} proposal
         draft? (= :draft-payroll-run op)
         validation (when contract-record (labor/validate-contract contract-record))
         ;; the EMPLOYER's jurisdiction, never the proposal's.
         juris (:jurisdiction client-record)
+        ;; 社会保険 fires on the same asserted condition rules 5 and 6 do, and
+        ;; additionally requires a REGISTERED contract: with none, rule 3
+        ;; already holds the run and four more violations about a contract
+        ;; that does not exist would bury it.
+        hoken (when (and draft? juris contract-record)
+                (hoken/assess {:jurisdiction juris
+                               :contract contract-record
+                               :proposal proposal}))
         ;; nil unless the employer declared where it pays wages — that
         ;; declaration is the asserted condition these two rules fire on.
         withholding (when (and draft? juris)
@@ -261,7 +365,13 @@
                           "給与等の支払には源泉徴収した所得税の計上が要る。"
                           "proposal の :income-tax-withheld: "
                           (pr-str (:income-tax-withheld proposal))
-                          "（納付期限 " (:taxlaw/remittance-deadline withholding) "）")})))))
+                          "（納付期限 " (:taxlaw/remittance-deadline withholding) "）")}))
+
+     ;; 12-14. 社会保険・労働保険. Every refusal `payroll.shakai-hoken` returns
+     ;; is a hold — there are no soft ones, for the reason rule 6 gives: an
+     ;; unanswered question about a lawful deduction from someone's wages is
+     ;; not a zero.
+     (if hoken (social-insurance-violations hoken) []))))
 
 (def assessment-op
   "The op that evaluates 所得税法 第百九十条. Named once so the edge, the
@@ -363,7 +473,39 @@
       :extra
       (cond
         draft?
-        {:tax
+        ;; TWO reports, and 社会保険 is deliberately NOT nested under `:tax`.
+        ;; 健康保険法, 厚生年金保険法, 介護保険法 and 労働保険徴収法 are not tax
+        ;; statutes, and a reader who found 保険料 inside a key called `:tax`
+        ;; would reasonably conclude this fleet had read a tax rule it has
+        ;; not. `payroll.shakai-hoken`'s docstring makes the same point about
+        ;; why the reading does not live in `kotoba.taxlaw`.
+        {:social-insurance
+         (cond
+           ;; Present on EVERY draft verdict, held or not, and saying
+           ;; `:jurisdiction-not-declared` where the employer declared none —
+           ;; the same device rule 5 uses, for the same reason: `nobody
+           ;; looked` and `we looked and all four are accounted for` must not
+           ;; print the same.
+           (nil? juris)
+           {:shakai-hoken/answer :jurisdiction-not-declared
+            :shakai-hoken/why (str "employer 記録に :jurisdiction が無い。"
+                                   "どこで支払われる給与かが宣言されていないので、"
+                                   "社会保険・労働保険の法令は一切参照していない"
+                                   "（適用なしの判断ではない）")}
+
+           (nil? contract-record)
+           {:shakai-hoken/answer :no-registered-contract
+            :shakai-hoken/why (str "被保険者資格も標準報酬月額も登録された契約に"
+                                   "書かれる事実なので、契約が無ければ問いを"
+                                   "立てられない。この run は契約が無いこと自体"
+                                   "で既に hold されている")}
+
+           :else
+           (hoken/assess {:jurisdiction juris
+                          :contract contract-record
+                          :proposal proposal}))
+
+         :tax
          {:jurisdiction juris
           :withholding
           (if juris

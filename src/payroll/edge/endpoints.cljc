@@ -225,7 +225,13 @@
     :income-tax-withheld   a negative or non-numeric amount is not an
                            accounting, and 所得税法 第百八十三条第一項 is what
                            says so. Flattening it to 400 would lose the
-                           article."
+                           article.
+    the four 社会保険 amounts  same reason, four articles over. Whether a run
+                           had to account for 健康保険料 at all depends on
+                           whether this worker is a 被保険者, which is a
+                           REGISTERED fact this route cannot see; answering
+                           400 here would be this surface deciding a question
+                           `payroll.shakai-hoken` answers with a citation."
   [s]
   (let [m (try (edn/read-string s)
                (catch #?(:clj Exception :cljs :default) _ nil))]
@@ -248,7 +254,12 @@
 
       :else
       {:fields (select-keys m [:contract-id :period :deductions
-                               :income-tax-withheld :stake])})))
+                               :income-tax-withheld
+                               :health-insurance-withheld
+                               :care-insurance-withheld
+                               :employees-pension-withheld
+                               :employment-insurance-withheld
+                               :stake])})))
 
 ;; ---------------------------------------------------------------------------
 ;; What 所得税法 could and could not say
@@ -300,6 +311,49 @@
                :not-assessed)
      :year-end-adjustment (or (get-in tax [:year-end-adjustment :taxlaw/coverage])
                               :not-assessed)}))
+
+(defn social-insurance-coverage
+  "The verdict's `:social-insurance` assessment reduced to a response body.
+
+  Descriptive, and none of it reads as approval. `:answer` is
+  `payroll.shakai-hoken`'s own:
+
+    :not-assessed              the op asserts no payment of wages, or there is
+                               no verdict at all
+    :jurisdiction-not-declared the employer declares no jurisdiction; **no
+                               social-insurance law was consulted.** Not a
+                               finding that nothing is owed
+    :no-registered-contract    coverage and 標準報酬月額 are facts written on a
+                               contract, and there is none. Already a hold for
+                               its own reason
+    :not-catalogued            the declared jurisdiction's social insurance was
+                               not read. A HARD hold, never a pass
+    :refused                   read, and at least one of the four schemes could
+                               not be answered. A HARD hold
+    :answered                  all four schemes answered
+
+  `:refusals` names the scheme, the reason and — where one is missing — the
+  exact key an operator must register, because `something was not observed` is
+  not an instruction. `:amounts-computed` is the list of schemes whose amount
+  this workspace can derive from a rate it read in a statute, which today is
+  厚生年金 and nothing else; serving the list rather than a boolean stops a
+  reader concluding that a 200 means four amounts were checked."
+  [verdict]
+  (let [a (:social-insurance verdict)]
+    (if-not a
+      {:answer :not-assessed :answerable? false}
+      {:answer (:shakai-hoken/answer a)
+       :answerable? (boolean (:shakai-hoken/answerable? a))
+       :jurisdiction (:shakai-hoken/jurisdiction a)
+       :why (:shakai-hoken/why a)
+       :refusals (vec (for [r (:shakai-hoken/refusals a)]
+                        (select-keys r [:scheme :answer :provision :why :missing])))
+       :accounted (:shakai-hoken/accounted a)
+       :not-covered (:shakai-hoken/not-covered a)
+       :amounts-computed
+       (vec (for [[k r] (:shakai-hoken/schemes a)
+                  :when (get-in r [:scheme/amount :amount/computable?])]
+              k))})))
 
 (defn year-end-summary
   "The verdict's `:nenmatsu` assessment reduced to a response body.
@@ -394,15 +448,26 @@
                      :period (:period fields)
                      :store mode
                      :disposition disposition
-                     :withholding (withholding-coverage verdict)}]
+                     :withholding (withholding-coverage verdict)
+                     :social-insurance (social-insurance-coverage verdict)}]
            (case disposition
              :commit {:status 200
-                      :body (assoc base
-                                   :gross (get-in r [:state :record :payload :gross])
-                                   :net (get-in r [:state :record :payload :net])
-                                   :income-tax-withheld
-                                   (get-in r [:state :record :payload
-                                              :income-tax-withheld]))}
+                      :body (merge base
+                                   {:gross (get-in r [:state :record :payload :gross])
+                                    :net (get-in r [:state :record :payload :net])}
+                                   ;; every withholding the committed record
+                                   ;; carries, named one by one. A caller that
+                                   ;; got `:income-tax-withheld` alone back
+                                   ;; from a run that also withheld 社会保険
+                                   ;; would have a receipt for a quarter of
+                                   ;; what left the payslip.
+                                   (select-keys
+                                    (get-in r [:state :record :payload])
+                                    [:income-tax-withheld
+                                     :health-insurance-withheld
+                                     :care-insurance-withheld
+                                     :employees-pension-withheld
+                                     :employment-insurance-withheld]))}
              :request-approval {:status 202
                                 :body (assoc base
                                              :awaiting :human-approval

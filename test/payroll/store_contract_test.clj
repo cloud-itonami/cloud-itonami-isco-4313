@@ -41,7 +41,21 @@
 (def ^:private employment
   (merge (labor/contract "c-jp" "worker-1" "emp-jp" "baker" :hourly 2000)
          {:employment/recipient-residency :resident
-          :employment/paid-in :domestic}))
+          :employment/paid-in :domestic}
+         ;; 社会保険: six more operator-registered facts that must survive the
+         ;; blob round trip. A backend that dropped
+         ;; `:employment/standard-remuneration-monthly-yen` would move a run
+         ;; from committed to HELD; one that dropped a coverage boolean would
+         ;; move it from `accounted for` to `nobody observed whether this
+         ;; worker is insured`. Both are silent and both happen only where the
+         ;; durable backend is deployed — the same argument this file already
+         ;; makes for `:employment/paid-in`.
+         {:employment/health-insurance-insured? true
+          :employment/employees-pension-insured? true
+          :employment/care-insurance-second-category? false
+          :employment/employment-insurance-insured? true
+          :employment/standard-remuneration-monthly-yen 280000
+          :employment/standard-remuneration-month "2026-06"}))
 
 (defn- seeded [make]
   (doto (make)
@@ -277,7 +291,11 @@
 (def ^:private clean-run
   {:client-id "emp-jp" :op :draft-payroll-run :stake :low
    :contract-id "c-jp" :period "2026-07" :deductions 3000
-   :income-tax-withheld 8420})
+   :income-tax-withheld 8420
+   ;; 280000 × 183 / 2000 = 25620 exactly (厚年法 第八十一条第四項)
+   :health-insurance-withheld 13860
+   :employees-pension-withheld 25620
+   :employment-insurance-withheld 168})
 
 (deftest a-clean-run-commits-identically-on-both-backends
   (let [go #(observed (run % clean-run "t-1"))]
@@ -353,16 +371,31 @@
                                          :taxlaw/coverage])
                     :amount-checked? (get-in e [:verdict :tax :withholding
                                                 :taxlaw/amount-checked?])
+                    ;; 社会保険 is the second report a naive encoder flattens,
+                    ;; and it is the deeper of the two — a map of four scheme
+                    ;; reports rather than a handful of keywords.
+                    :social-insurance (get-in e [:verdict :social-insurance
+                                                 :shakai-hoken/answer])
+                    :accounted (get-in e [:verdict :social-insurance
+                                          :shakai-hoken/accounted])
                     :rules (mapv :rule (get-in e [:verdict :violations]))}))) ]
       (testing "an uncatalogued jurisdiction — :none, and a HARD hold"
         (is (= (go store/mem-store [:atlantis] {}) (go store/datomic-store [:atlantis] {})))
+        ;; refused TWICE, by two bodies of law that were each unread for their
+        ;; own reason. Collapsing them to one rule would tell an operator that
+        ;; cataloguing the tax would be enough.
         (is (= {:disposition :hold :coverage :none :year-end :not-evaluated
-                :amount-checked? nil :rules [:unchecked-jurisdiction]}
+                :amount-checked? nil :social-insurance :not-catalogued
+                :accounted nil
+                :rules [:unchecked-jurisdiction
+                        :unchecked-social-insurance-jurisdiction]}
                (go store/datomic-store [:atlantis] {}))))
       (testing "no jurisdiction declared — :not-declared, and NOT a hold"
         (is (= (go store/mem-store nil {}) (go store/datomic-store nil {})))
         (is (= {:disposition :commit :coverage :not-declared
-                :year-end :not-evaluated :amount-checked? nil :rules []}
+                :year-end :not-evaluated :amount-checked? nil
+                :social-insurance :jurisdiction-not-declared :accounted nil
+                :rules []}
                (go store/datomic-store nil {}))))
       (testing "declared outside the one article that was read — :out-of-scope"
         (let [overrides {:employment/paid-in :overseas}]
@@ -371,8 +404,23 @@
           (is (= :out-of-scope (:coverage (go store/datomic-store [:jp] overrides))))))
       (testing "checked — and never certifying the amount"
         (is (= {:disposition :commit :coverage :checked :year-end :not-evaluated
-                :amount-checked? false :rules []}
-               (go store/datomic-store [:jp] {})))))))
+                :amount-checked? false :social-insurance :answered
+                :accounted [:scheme/health-insurance
+                            :scheme/employees-pension
+                            :scheme/employment-insurance]
+                :rules []}
+               (go store/datomic-store [:jp] {}))))
+      (testing "and a contract whose 社会保険 registrations did NOT survive is
+                held, on both backends"
+        (let [overrides {:employment/standard-remuneration-monthly-yen nil}]
+          (is (= (go store/mem-store [:jp] overrides)
+                 (go store/datomic-store [:jp] overrides)))
+          (is (= {:disposition :hold :coverage :checked :year-end :not-evaluated
+                  :amount-checked? false :social-insurance :refused
+                  :accounted [:scheme/employment-insurance]
+                  :rules [:standard-remuneration-not-observed
+                          :standard-remuneration-not-observed]}
+                 (go store/datomic-store [:jp] overrides))))))))
 
 (deftest the-backends-are-actually-two
   ;; Evidence floor. Every test above loops over `backends`; if that map ever

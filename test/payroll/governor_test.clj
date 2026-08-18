@@ -4,6 +4,7 @@
             [clojure.string]
             [kotoba.labor :as labor]
             [payroll.nenmatsu :as nenmatsu]
+            [payroll.shakai-hoken :as hoken]
             [payroll.store :as store]
             [payroll.governor :as governor]))
 
@@ -111,6 +112,22 @@
 ;; 源泉徴収 — 所得税法 第百八十三条第一項, via kotoba.taxlaw
 ;; ---------------------------------------------------------------------------
 
+(def ^:private insured
+  "社会保険: what an operator REGISTERS so the four contributions can be
+  answered at all. Every one of these is a fact about the workplace or a
+  保険者's determination — none is derivable here — and leaving any of them
+  out is a HOLD, which is what `payroll.shakai-hoken-test` and the new
+  governor tests below use a fixture WITHOUT them for.
+
+  介護保険 is registered FALSE, so the happy path exercises `:not-covered`
+  alongside `:accounted-for` rather than only the latter."
+  {:employment/health-insurance-insured? true
+   :employment/employees-pension-insured? true
+   :employment/care-insurance-second-category? false
+   :employment/employment-insurance-insured? true
+   :employment/standard-remuneration-monthly-yen 280000
+   :employment/standard-remuneration-month "2026-06"})
+
 (defn- jp-store
   "Same fixture, but the employer DECLARES where it pays wages and the
   contract carries the two facts the article turns on. Both are registered by
@@ -128,14 +145,31 @@
       st (merge (labor/contract "c-jp" "worker-1" "emp-jp" "baker" :hourly 2000)
                 {:employment/recipient-residency :resident
                  :employment/paid-in :domestic}
+                insured
                 contract-overrides))
      (store/register-timesheet! st (labor/timesheet "worker-1" "2026-07-01" 8))
      (store/register-timesheet! st (labor/timesheet "worker-1" "2026-07-02" 6))
      st)))
 
-(defn- jp-proposal [& {:as extra}]
+
+
+(defn- jp-proposal
+  "A proposal that accounts for the three contributions this fixture's worker
+  is a 被保険者 of.
+
+  They were added on 2026-08-18 with `insured`, and the pair is the change
+  itself: before it, a proposal carrying `:income-tax-withheld` alone WAS a
+  clean JP payroll run, and `:ok? true` meant `one of four`. The withholding
+  tests below are unchanged and still test withholding, because the fixture
+  now describes an employer that has registered everything — which is what
+  those tests always meant by clean."
+  [& {:as extra}]
   (merge {:op :draft-payroll-run :effect :propose :contract-id "c-jp"
           :period "2026-07" :gross 28000 :deductions 3000 :net 25000
+          ;; 280000 × 183 / 2000 = 25620 exactly (厚年法 第八十一条第四項)
+          :health-insurance-withheld 13860
+          :employees-pension-withheld 25620
+          :employment-insurance-withheld 168
           :confidence 0.9 :stake :low}
          extra))
 
@@ -560,3 +594,194 @@
             第百八十三条第一項 to answer about"
     (let [v (nen-check :request (nen-request :final-payment-of-year? true))]
       (is (nil? (:tax v))))))
+
+;; ---------------------------------------------------------------------------
+;; 社会保険・労働保険 (rules 12-14) — the other three quarters of a payslip
+;;
+;; This is the block where `:ok? true` stopped meaning `one of four`. Before
+;; 2026-08-18 a JP payroll run that accounted for 所得税 and said nothing about
+;; 健康保険料, 介護保険料, 厚生年金保険料 or 雇用保険料 committed, and the
+;; verdict carried no trace of the other three. `jp-store`/`jp-proposal` above
+;; now register and declare them, which is why the withholding tests are
+;; unchanged; these tests use fixtures that deliberately do not.
+;; ---------------------------------------------------------------------------
+
+(defn- uninsured-store
+  "The fixture as it was before this change: 所得税 facts registered, and
+  nothing about 社会保険."
+  []
+  (let [st (store/mem-store)]
+    (store/register-client! st {:client-id "emp-jp" :name "Hanako's Bakery"
+                                :jurisdiction [:jp]})
+    (store/register-contract!
+     st (merge (labor/contract "c-jp" "worker-1" "emp-jp" "baker" :hourly 2000)
+               {:employment/recipient-residency :resident
+                :employment/paid-in :domestic}))
+    (store/register-timesheet! st (labor/timesheet "worker-1" "2026-07-01" 8))
+    (store/register-timesheet! st (labor/timesheet "worker-1" "2026-07-02" 6))
+    st))
+
+(defn- tax-only-proposal
+  "What a clean run looked like before: gross, net and 所得税."
+  [& {:as extra}]
+  (merge {:op :draft-payroll-run :effect :propose :contract-id "c-jp"
+          :period "2026-07" :gross 28000 :deductions 3000 :net 25000
+          :income-tax-withheld 8420 :confidence 0.9 :stake :low}
+         extra))
+
+(deftest the-verdict-that-used-to-commit-is-now-held
+  (testing "所得税 accounted for, and nothing said about the other three
+            quarters of the payslip. This exact verdict committed until
+            2026-08-18"
+    (let [v (governor/check {:client-id "emp-jp"} {} (tax-only-proposal)
+                            (uninsured-store))]
+      (is (not (:ok? v)) ":ok? true must stop meaning `one of four`")
+      (is (:hard? v))
+      (testing "and 源泉徴収 is satisfied, so the hold is entirely the new one"
+        (is (not (some #(= :income-tax-not-withheld (:rule %)) (:violations v))))
+        (is (= :checked (get-in v [:tax :withholding :taxlaw/coverage]))))
+      (testing "one refusal per scheme, each naming the key to register"
+        (is (= 4 (count (filter #(= :social-insurance-coverage-not-observed
+                                    (:rule %))
+                                (:violations v)))))
+        (is (some #(str/includes? (str (:detail %))
+                                  ":employment/health-insurance-insured?")
+                  (:violations v)))))))
+
+(deftest no-confidence-buys-past-the-social-insurance-hold
+  (testing "a HARD rule is never escalatable. A human cannot sign off on three
+            contributions nobody computed, and inviting them to would make the
+            approval queue the place unanswered questions go to become
+            answered ones"
+    (let [v (governor/check {:client-id "emp-jp"} {}
+                            (tax-only-proposal :confidence 0.99)
+                            (uninsured-store))]
+      (is (:hard? v))
+      (is (not (:escalate? v)))
+      (is (not (:ok? v))))))
+
+(deftest a-registered-worker-whose-run-declares-nothing-is-held-per-scheme
+  (testing "registered as insured under three schemes and declaring none of
+            them: three refusals, not one"
+    (let [v (governor/check {:client-id "emp-jp"} {}
+                            (jp-proposal :income-tax-withheld 8420
+                                         :health-insurance-withheld nil
+                                         :employees-pension-withheld nil
+                                         :employment-insurance-withheld nil)
+                            (jp-store))
+          hits (filter #(= :social-insurance-not-accounted-for (:rule %))
+                       (:violations v))]
+      (is (:hard? v))
+      (is (= 3 (count hits)))
+      (is (= #{:scheme/health-insurance :scheme/employees-pension
+               :scheme/employment-insurance}
+             (set (map :shakai-hoken/scheme hits)))))))
+
+(deftest the-one-rate-read-from-a-statute-is-the-one-amount-refused
+  (testing "厚生年金保険法 第八十一条第四項 puts the rate IN the Act, so an amount
+            no rounding rule could produce from the registered 標準報酬月額 is
+            wrong under every rounding rule and is held. The other three rates
+            are not in their Acts and no amount of theirs is checked"
+    (let [v (governor/check {:client-id "emp-jp"} {}
+                            (jp-proposal :income-tax-withheld 8420
+                                         :employees-pension-withheld 9999)
+                            (jp-store))]
+      (is (:hard? v))
+      (is (some #(= :social-insurance-amount-contradicts-statutory-rate (:rule %))
+                (:violations v))))
+    (testing "and a health-insurance amount just as arbitrary is NOT held,
+              because nothing here read that rate"
+      (let [v (governor/check {:client-id "emp-jp"} {}
+                              (jp-proposal :income-tax-withheld 8420
+                                           :health-insurance-withheld 9999)
+                              (jp-store))]
+        (is (:ok? v))))))
+
+(deftest every-shakai-hoken-refusal-has-a-hard-rule
+  (testing "driven off the refusal set rather than a cond, so a refusal that
+            namespace adds and this governor has not classified is caught here
+            instead of committing"
+    (doseq [r hoken/refusals]
+      (is (contains? governor/hoken-refusal-rules r)
+          (str "unclassified refusal: " r))))
+  (testing "and no answer is classified as both"
+    (is (empty? (filter hoken/answers (keys governor/hoken-refusal-rules))))))
+
+(deftest an-employer-with-no-jurisdiction-is-still-not-held-and-still-reported
+  (testing "the same asserted condition rules 5 and 6 fire on: nobody said
+            where these wages are paid, so no social-insurance law was
+            consulted — and that must not look like four clean checks"
+    (let [v (governor/check {:client-id "emp-1"} {} (clean-proposal) (fresh-store))]
+      (is (:ok? v))
+      (is (= :jurisdiction-not-declared
+             (get-in v [:social-insurance :shakai-hoken/answer])))
+      (is (str/includes? (get-in v [:social-insurance :shakai-hoken/why])
+                         "適用なしの判断ではない")))))
+
+(deftest a-run-citing-no-contract-is-not-buried-under-four-more-violations
+  (testing "rule 3 already holds it, and coverage is a fact written on a
+            contract that does not exist"
+    (let [v (governor/check {:client-id "emp-jp"} {}
+                            (tax-only-proposal :contract-id nil)
+                            (uninsured-store))]
+      (is (:hard? v))
+      (is (some #(= :no-contract (:rule %)) (:violations v)))
+      (is (not (some #(= :social-insurance-coverage-not-observed (:rule %))
+                     (:violations v))))
+      (is (= :no-registered-contract
+             (get-in v [:social-insurance :shakai-hoken/answer]))))))
+
+(deftest social-insurance-is-not-filed-under-tax
+  (testing "健康保険法, 厚生年金保険法, 介護保険法 and 労働保険徴収法 are not tax
+            statutes. A reader who found 保険料 under `:tax` would reasonably
+            conclude this fleet had read a tax rule it has not"
+    (let [v (governor/check {:client-id "emp-jp"} {}
+                            (jp-proposal :income-tax-withheld 8420) (jp-store))]
+      (is (some? (:social-insurance v)))
+      (is (nil? (get-in v [:tax :social-insurance]))))))
+
+(deftest the-jp-exclusion-for-income-tax-is-not-an-exclusion-for-social-insurance
+  (testing "所得税法 第百八十三条第一項 binds a payer 「居住者に対し国内において」。
+            健康保険法 and 厚生年金保険法 say nothing of the kind, so a declared
+            non-resident paid abroad is OUT of the income-tax article and
+            still fully inside the social-insurance ones"
+    (let [st (jp-store {} {:employment/recipient-residency :non-resident
+                           :employment/paid-in :overseas})]
+      (is (:ok? (governor/check {:client-id "emp-jp"} {} (jp-proposal) st))
+          "registered and declared: answered")
+      (let [v (governor/check {:client-id "emp-jp"} {}
+                              (jp-proposal :employees-pension-withheld nil) st)]
+        (is (:hard? v) "the article that excused the tax excuses nothing here")
+        (is (= :out-of-scope (get-in v [:tax :withholding :taxlaw/coverage])))
+        (is (some #(= :social-insurance-not-accounted-for (:rule %))
+                  (:violations v)))))))
+
+(deftest non-jp-gains-a-second-reason-to-be-held-and-loses-none
+  (doseq [[j needle] [[[:us] "FICA"] [[:eu] "883/2004"] [[:atlantis] "未検査"]]]
+    (testing (str j)
+      (let [v (governor/check {:client-id "emp-jp"} {} (jp-proposal)
+                              (jp-store {:jurisdiction j} {}))
+            hit (first (filter #(= :unchecked-social-insurance-jurisdiction
+                                   (:rule %))
+                               (:violations v)))]
+        (is (:hard? v))
+        (is (some? hit))
+        (is (str/includes? (:detail hit) needle))
+        (testing "and rule 6 still does not fire — taxlaw could not check it"
+          (is (not (some #(= :income-tax-not-withheld (:rule %))
+                         (:violations v)))))))))
+
+(deftest a-jp-run-that-answers-all-four-commits
+  (testing "the point of the change is not that nothing passes"
+    (let [v (governor/check {:client-id "emp-jp"} {}
+                            (jp-proposal :income-tax-withheld 8420) (jp-store))]
+      (is (:ok? v))
+      (is (not (:hard? v)))
+      (is (= :answered (get-in v [:social-insurance :shakai-hoken/answer])))
+      (testing "and the verdict still refuses to certify any amount but the
+                one whose rate is in a statute"
+        (is (= [:scheme/employees-pension]
+               (vec (for [[k r] (get-in v [:social-insurance
+                                           :shakai-hoken/schemes])
+                          :when (get-in r [:scheme/amount :amount/computable?])]
+                      k))))))))

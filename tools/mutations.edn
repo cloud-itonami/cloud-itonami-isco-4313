@@ -17,11 +17,18 @@
 ;;   3. 年末調整 — `payroll.nenmatsu`, the `:assess-year-end-adjustment` rules
 ;;      in `payroll.governor`, its route, and the two places its records had
 ;;      to become legible in the ledger (added 2026-08-18).
+;;   4. 社会保険・労働保険 — `payroll.shakai-hoken`, the rules 12-14 wiring in
+;;      `payroll.governor`, and the two extra 預り金 lines in `payroll.shiwake`
+;;      (added 2026-08-18). This is the block where `:ok? true` stopped
+;;      meaning `one of four`, so it is the block where a surviving mutation
+;;      would mean the change was never measured.
 ;;
 ;; What is NOT covered, and would be measured by nothing if this table were
 ;; read as a whole-repo verdict: the wage/net arithmetic rules, the advisor,
-;; both store backends, `payroll.shiwake`, the pure `payroll.handoff`, and
-;; `POST /api/payroll-run`'s own body parsing. All of those have suites; none
+;; both store backends, the pure `payroll.handoff`, and
+;; `POST /api/payroll-run`'s own body parsing. (`payroll.shiwake` left this
+;; list on 2026-08-18: its two new liability lines are covered below, but its
+;; ORIGINAL three-line entry still is not.) All of those have suites; none
 ;; of those suites has been shown here to be capable of failing. A clean run
 ;; means "every invariant LISTED BELOW is measured", never "this actor is
 ;; measured" — reading it as the second would be exactly the defect the
@@ -395,4 +402,119 @@
   :invariant "`the US has no year-end adjustment` is not `we never heard of the US`"
   :file "src/payroll/nenmatsu.cljc"
   :find "                             (or (:taxlaw/why law)"
-  :replace "                             (or nil"}]
+  :replace "                             (or nil"}
+ ;; --------------------------------------------------------------------------
+ ;; 社会保険・労働保険 (2026-08-18)
+ ;;
+ ;; Written BEFORE the new tests were re-read, which is the only way this
+ ;; table measures anything: a mutation designed against a test measures the
+ ;; test author's memory.
+ ;; --------------------------------------------------------------------------
+
+ ;; The one rate this workspace read out of a statute
+ ;; (厚生年金保険法 第八十一条第四項, 千分の百八十三・〇〇). If nothing notices
+ ;; it moving, the amount check is decoration.
+ {:id :pension-rate-is-the-statutory-one
+  :invariant "厚年法 第八十一条第四項 の 千分の百八十三 が実際に使われている"
+  :file "src/payroll/shakai_hoken.cljc"
+  :find "      :rate/per-mille 183"
+  :replace "      :rate/per-mille 184"}
+
+ ;; 厚年法 第八十二条第一項: 被保険者 bears HALF. Dropping the /2 doubles every
+ ;; employee's pension contribution.
+ {:id :the-employee-bears-half-of-the-pension-premium
+  :invariant "厚年法 第八十二条第一項 の折半（分母 2000 = 1000 × 2）"
+  :file "src/payroll/shakai_hoken.cljc"
+  :find "{:numerator (* srm per-mille) :denominator 2000 :unit :yen}"
+  :replace "{:numerator (* srm per-mille) :denominator 1000 :unit :yen}"}
+
+ ;; The bound is STRICT: any whole-yen rendering differs from the exact value
+ ;; by strictly less than one yen, so an amount exactly one yen out is wrong.
+ {:id :the-one-yen-bound-is-strict
+  :invariant "端数処理規則を読まずに言える限界は < であって <= ではない"
+  :file "src/payroll/shakai_hoken.cljc"
+  :find "  (< (abs* (- (* declared denominator) numerator)) denominator))"
+  :replace "  (<= (abs* (- (* declared denominator) numerator)) denominator))"}
+
+ ;; The whole point: an unobserved 資格 is NOT `this worker is not insured`.
+ {:id :unobserved-coverage-is-not-not-covered
+  :invariant "資格未登録は「該当しない」ではない（未観測は合格ではない）"
+  :file "src/payroll/shakai_hoken.cljc"
+  :find "                 (nil? covered) :coverage-not-observed"
+  :replace "                 (nil? covered) :not-covered"}
+
+ ;; A registration that is the STRING "true" is not a registration.
+ {:id :a-string-true-is-not-a-registration
+  :invariant "boolean? による正規化（typo で買える合格を作らない）"
+  :file "src/payroll/shakai_hoken.cljc"
+  :find "  (when (boolean? x) x))"
+  :replace "  x)"}
+
+ ;; Reclassifying a refusal as an answer is the single edit that would let an
+ ;; unaccounted-for contribution commit.
+ {:id :not-accounted-for-is-not-an-answer
+  :invariant "計上なしは回答ではない（answers 集合に入れてはならない）"
+  :file "src/payroll/shakai_hoken.cljc"
+  :find "  #{:accounted-for :not-covered})"
+  :replace "  #{:accounted-for :not-covered :not-accounted-for})"}
+
+ ;; A fraction of a yen is not a whole-yen accounting, and the bound argument
+ ;; depends on the declared amount being whole yen.
+ {:id :a-fraction-of-a-yen-is-not-an-accounting
+  :invariant "計上額は円単位（円未満の端数を受け付けない）"
+  :file "src/payroll/shakai_hoken.cljc"
+  :find "  (and (number? x) (not (neg? x)) (zero? (mod x 1))))"
+  :replace "  (and (number? x) (not (neg? x))))"}
+
+ ;; YYYY-MM is refused for any other shape precisely so that lexicographic
+ ;; comparison is chronological comparison.
+ {:id :the-month-format-is-a-real-month
+  :invariant "月分は YYYY-MM のみ（13 月を通さない）"
+  :file "src/payroll/shakai_hoken.cljc"
+  :find "  #\"^\\d{4}-(0[1-9]|1[0-2])$\")"
+  :replace "  #\"^\\d{4}-\\d{2}$\")"}
+
+ ;; Only the last row of 第八十一条第四項's table was transcribed; a month
+ ;; before it must be refused rather than rated at 183.
+ {:id :a-month-before-the-transcribed-row-is-refused
+  :invariant "転記していない料率行の月分に 183 を当てない"
+  :file "src/payroll/shakai_hoken.cljc"
+  :find "                      (neg? (compare month (:rate/applies-from-month rate))))"
+  :replace "                      (and false (compare month (:rate/applies-from-month rate))))"}
+
+ ;; The wiring: rules 12-14 actually reach the verdict.
+ {:id :social-insurance-refusals-reach-the-verdict
+  :invariant "shakai-hoken の refusal が HARD violation になる"
+  :file "src/payroll/governor.cljc"
+  :find "     (if hoken (social-insurance-violations hoken) []))))"
+  :replace "     (if false (social-insurance-violations hoken) []))))"}
+
+ ;; The rule NAMES matter: an operator reads them.
+ {:id :the-coverage-rule-is-named-not-unclassified
+  :invariant "各 refusal が固有の rule 名を持つ"
+  :file "src/payroll/governor.cljc"
+  :find "   :coverage-not-observed :social-insurance-coverage-not-observed"
+  :replace "   :coverage-not-observed-typo :social-insurance-coverage-not-observed"}
+
+ ;; 社会保険 is not tax, and the verdict must not file it under one.
+ {:id :social-insurance-is-not-nested-under-tax
+  :invariant "verdict の :social-insurance は :tax の子ではない"
+  :file "src/payroll/governor.cljc"
+  :find "        {:social-insurance\n         (cond"
+  :replace "        {:tax-social-insurance\n         (cond"}
+
+ ;; 仕訳: the identity that catches a contribution deducted and not posted.
+ {:id :the-journal-identity-counts-social-insurance
+  :invariant "gross = 所得税 + 社会保険 + 雇用保険 + net"
+  :file "src/payroll/shiwake.cljc"
+  :find "      (not= gross (+ income-tax-withheld si-total ei-total net))"
+  :replace "      (not= gross (+ income-tax-withheld net))"}
+
+ ;; 健保法 第百六十一条第二項 / 厚年法 第八十二条第二項 (monthly, to the insurer)
+ ;; and 労働保険徴収法 (annual, for a 保険年度) are different liabilities.
+ {:id :the-two-new-liabilities-are-two
+  :invariant "社会保険料預り金 と 雇用保険料預り金 を一本にまとめない"
+  :file "src/payroll/shiwake.cljc"
+  :find "                 (pos? ei-total)\n                 (conj {:side :cr :account employment-insurance"
+  :replace "                 (and false (pos? ei-total))\n                 (conj {:side :cr :account employment-insurance"}
+]

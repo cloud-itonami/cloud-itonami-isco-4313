@@ -15,6 +15,10 @@
      :period str
      :gross n :deductions n :net n
      :income-tax-withheld n-or-nil
+     :health-insurance-withheld       n-or-nil
+     :care-insurance-withheld         n-or-nil
+     :employees-pension-withheld      n-or-nil
+     :employment-insurance-withheld   n-or-nil
      :stake :low|:medium|:high
      :confidence 0.0-1.0
      :rationale str}
@@ -26,6 +30,22 @@
   income tax, not that the amount is right. An advisor that invented a
   plausible figure here would be inventing exactly the thing nothing
   downstream can check.
+
+  ## The four 社会保険 amounts are carried through the same way, and are FOUR
+
+  `:health-insurance-withheld`, `:care-insurance-withheld`,
+  `:employees-pension-withheld` and `:employment-insurance-withheld` are
+  carried from the request and computed by nobody here. They are four fields
+  and not one, because 雇用保険料 is computed on a different base from the
+  other three (賃金, not 標準報酬月額) and the employee's share of it is not
+  half — 労働保険徴収法 第三十一条第一項第一号. A single combined number
+  could not be checked against either rule. See `payroll.shakai-hoken`.
+
+  Only ONE of the four has a rate this workspace read from a statute
+  (厚生年金保険法 第八十一条第四項), and the governor bounds that one against
+  the registered 標準報酬月額. The advisor still does not compute it: an
+  advisor that produced the figure the governor checks would be marking its
+  own work.
 
   ## `:assess-year-end-adjustment` carries nothing at all
 
@@ -49,7 +69,9 @@
   advisor computes gross via kotoba.labor from the registered contract
   and timesheets (an LLM advisor would do the same tool-call); the
   governor recomputes independently either way."
-  [store {:keys [op stake contract-id period deductions income-tax-withheld]
+  [store {:keys [op stake contract-id period deductions income-tax-withheld
+                 health-insurance-withheld care-insurance-withheld
+                 employees-pension-withheld employment-insurance-withheld]
           :as request}]
   (let [base {:op op
               :effect :propose
@@ -66,8 +88,16 @@
                :gross gross
                :deductions ded
                ;; carried through, not invented — nil when the request did
-               ;; not say, which is the case the governor holds.
+               ;; not say, which is the case the governor holds. The same is
+               ;; true of all four 社会保険 amounts below: a nil is what makes
+               ;; rule 14 fire, so defaulting any of them to 0 here would
+               ;; convert an unanswered question into an assertion that the
+               ;; contribution was zero.
                :income-tax-withheld income-tax-withheld
+               :health-insurance-withheld health-insurance-withheld
+               :care-insurance-withheld care-insurance-withheld
+               :employees-pension-withheld employees-pension-withheld
+               :employment-insurance-withheld employment-insurance-withheld
                :net (when gross (- gross ded))))
       base)))
 

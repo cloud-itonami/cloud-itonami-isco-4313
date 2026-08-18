@@ -10,12 +10,31 @@
   This suite checks not WHAT the governor decided (the other suites do that)
   but that whatever it decided is internally consistent, across every
   disposition this actor has."
-  (:require [clojure.test :refer [deftest is testing]]
+  (:require [clojure.string]
+            [clojure.test :refer [deftest is testing]]
             [kotoba.labor :as labor]
             [payroll.nenmatsu :as nenmatsu]
             [payroll.store :as store]
             [payroll.governor :as governor]
             [governor.core :as gov]))
+
+(def ^:private insured
+  "社会保険: the operator-registered facts 健康保険法 / 厚生年金保険法 /
+  労働保険徴収法 turn on. Contracts that carry them can be answered; contracts
+  that do not are HELD, and both appear below."
+  {:employment/health-insurance-insured? true
+   :employment/employees-pension-insured? true
+   :employment/care-insurance-second-category? false
+   :employment/employment-insurance-insured? true
+   :employment/standard-remuneration-monthly-yen 280000
+   :employment/standard-remuneration-month "2026-06"})
+
+(def ^:private contributions
+  "What a run must declare for the three schemes `insured` covers.
+  280000 × 183 / 2000 = 25620 exactly — 厚生年金保険法 第八十一条第四項."
+  {:health-insurance-withheld 13860
+   :employees-pension-withheld 25620
+   :employment-insurance-withheld 168})
 
 (defn- fresh-store []
   (let [st (store/mem-store)]
@@ -33,11 +52,24 @@
     (store/register-contract!
      st (merge (labor/contract "c-jp" "worker-1" "emp-jp" "baker" :hourly 2000)
                {:employment/recipient-residency :resident
+                :employment/paid-in :domestic}
+               insured))
+    ;; NOT insured, so that the case set carries a run whose 所得税 is fine and
+    ;; whose 社会保険 is unobserved — which is precisely the verdict that used
+    ;; to commit.
+    (store/register-contract!
+     st (merge (labor/contract "c-jp-uninsured" "worker-1" "emp-jp" "baker" :hourly 2000)
+               {:employment/recipient-residency :resident
                 :employment/paid-in :domestic}))
     (store/register-contract!
      st (merge (labor/contract "c-jp-nr" "worker-1" "emp-jp" "baker" :hourly 2000)
                {:employment/recipient-residency :non-resident
-                :employment/paid-in :overseas}))
+                :employment/paid-in :overseas}
+               ;; 所得税法 第百八十三条第一項 does not reach a non-resident paid
+               ;; abroad. 健康保険法 and 厚生年金保険法 say nothing of the kind,
+               ;; so the 社会保険 registrations stay — an exclusion under one
+               ;; statute is not an exclusion under another.
+               insured))
     (store/register-contract!
      st (labor/contract "c-atl" "worker-1" "emp-atl" "baker" :hourly 2000))
     ;; the one contract on which the 申告書 is actually registered. Every other
@@ -113,10 +145,33 @@
    ;; `every-non-hold-tax-case-says-what-was-not-checked` below pins that the
    ;; reason is on it.
    {:name :ok/withholding-accounted-for :request {:client-id "emp-jp"}
-    :proposal (assoc clean :contract-id "c-jp" :income-tax-withheld 8420)}
+    :proposal (merge clean contributions
+                     {:contract-id "c-jp" :income-tax-withheld 8420})}
 
    {:name :ok/outside-the-read-article :request {:client-id "emp-jp"}
-    :proposal (assoc clean :contract-id "c-jp-nr")}
+    :proposal (merge clean contributions {:contract-id "c-jp-nr"})}
+
+   ;; --- 社会保険・労働保険 (健保法/厚年法/介護保険法/徴収法) ------------------
+   ;;
+   ;; The verdict that used to commit: 所得税 accounted for, and nothing said
+   ;; about the other three quarters of the payslip.
+   {:name :hard/social-insurance-coverage-not-observed
+    :request {:client-id "emp-jp"}
+    :proposal (assoc clean :contract-id "c-jp-uninsured"
+                     :income-tax-withheld 8420)}
+
+   ;; registered as insured, and the run declares no contributions.
+   {:name :hard/social-insurance-not-accounted-for
+    :request {:client-id "emp-jp"}
+    :proposal (assoc clean :contract-id "c-jp" :income-tax-withheld 8420)}
+
+   ;; 厚年法 第八十一条第四項 is the one rate this workspace read from a
+   ;; statute, so this is the one amount it can refuse.
+   {:name :hard/social-insurance-amount-contradicts-statutory-rate
+    :request {:client-id "emp-jp"}
+    :proposal (merge clean contributions
+                     {:contract-id "c-jp" :income-tax-withheld 8420
+                      :employees-pension-withheld 9999})}
 
    ;; --- 年末調整 (所得税法 第百九十条) ----------------------------------------
    ;;
@@ -180,7 +235,7 @@
   ;; disposition would pass while checking almost nothing.
   (let [vs (map verdict-for cases)]
     (is (>= (count (filter :ok? vs)) 5) "no clean case")
-    (is (>= (count (filter :hard? vs)) 13) "HARD rules under-covered")
+    (is (>= (count (filter :hard? vs)) 16) "HARD rules under-covered")
     (is (>= (count (filter :escalate? vs)) 3) "escalation under-covered")))
 
 (deftest every-non-hold-tax-case-says-what-was-not-checked
@@ -241,3 +296,38 @@
     (is (>= (count (filter nenmatsu/refusals answers)) 4)
         "every refusal must appear, or the ⇔ above is half-tested")
     (is (>= (count (filter nenmatsu/answers answers)) 2))))
+
+(deftest every-social-insurance-answer-is-either-answered-or-held
+  ;; The same device as `every-year-end-answer-is-either-answered-or-held`,
+  ;; four statutes over. `payroll.shakai-hoken` answers per scheme and every
+  ;; refusal it can return is a HOLD — a run that committed while saying
+  ;; `nobody registered whether this worker is a 被保険者` would be the
+  ;; unevaluated-rule defect wearing the evaluated rule's clothes, which is
+  ;; exactly what this actor did until 2026-08-18.
+  (doseq [{:keys [name] :as c} cases
+          :let [v (verdict-for c)
+                si (:social-insurance v)]
+          :when si]
+    (testing (str name)
+      (let [answer (:shakai-hoken/answer si)]
+        (is (some? answer))
+        (is (not (clojure.string/blank? (str (or (:shakai-hoken/why si)
+                                                 (:shakai-hoken/answer si)))))
+            "a report nobody can read is not a report")
+        (when (contains? #{:not-catalogued :refused} answer)
+          (is (:hard? v) (str answer " must be a hold")))
+        (when (= :answered answer)
+          (is (not (some #(= "social-insurance"
+                             (namespace (or (:rule %) :x)))
+                         (:violations v)))))))))
+
+(deftest the-social-insurance-cases-cover-both-sides
+  ;; evidence floor: a case set that all landed on one side would pass while
+  ;; measuring nothing. Five distinct answers exist and four must appear.
+  (let [answers (->> cases (map verdict-for) (keep :social-insurance)
+                     (map :shakai-hoken/answer) set)]
+    (is (contains? answers :answered))
+    (is (contains? answers :refused))
+    (is (contains? answers :not-catalogued))
+    (is (contains? answers :jurisdiction-not-declared))
+    (is (>= (count answers) 4))))
