@@ -1,5 +1,6 @@
 (ns payroll.shiwake-test
-  (:require [clojure.test :refer [deftest is testing]]
+  (:require [clojure.string]
+            [clojure.test :refer [deftest is testing]]
             [payroll.shiwake :as shiwake]))
 
 (def ^:private mapping
@@ -105,3 +106,92 @@
             (str "must not call out: found " tok)))
       (is (not (re-find #"\*\s*0\.|rate|tax-table" src))
           "must not compute a withholding amount"))))
+
+;; ---------------------------------------------------------------------------
+;; 五 lines once 社会保険 exists
+;;
+;; A payroll run that withholds 健康保険料 / 介護保険料 / 厚生年金保険料 /
+;; 雇用保険料 and posts a three-line entry is an entry that has lost the
+;; difference. Until 2026-08-18 this namespace refused every such run with
+;; `:unusable-run` — safe, and no help to anyone.
+;; ---------------------------------------------------------------------------
+
+(def ^:private full-mapping
+  (assoc mapping :social-insurance "社会保険料預り金"
+                 :employment-insurance "雇用保険料預り金"))
+
+(defn- insured-run
+  "gross 300000 = 所得税 8420 + 社会保険 (13860 + 0 + 25620) + 雇用保険 1800
+   + net 250300."
+  [& {:as extra}]
+  {:disposition :commit
+   :run (merge {:contract-id "c-1" :period "2026-07" :currency "JPY"
+                :gross 300000 :net 250300 :income-tax-withheld 8420
+                :health-insurance-withheld 13860
+                :employees-pension-withheld 25620
+                :employment-insurance-withheld 1800}
+               extra)})
+
+(deftest social-insurance-becomes-two-liabilities-and-not-one
+  (testing "健保法 第百六十一条第二項 and 厚年法 第八十二条第二項 make the employer
+            liable to the insurer month by month; 労働保険徴収法 collects
+            労働保険料 for a 保険年度. Netting them would put a monthly
+            liability and an annual one in the same balance"
+    (let [req (:shiwake/request (shiwake/entry-request (insured-run) full-mapping))]
+      (is (= 5 (count (:lines req))))
+      (is (= [["給料手当" :dr 300000]
+              ["預り金" :cr 8420]
+              ["社会保険料預り金" :cr 39480]      ; 13860 + 0 + 25620
+              ["雇用保険料預り金" :cr 1800]
+              ["未払金" :cr 250300]]
+             (mapv (juxt :account :side :amount) (:lines req))))
+      (testing "and it balances"
+        (let [by (group-by :side (:lines req))]
+          (is (= (reduce + (map :amount (:dr by)))
+                 (reduce + (map :amount (:cr by))))))))))
+
+(deftest a-contribution-that-was-deducted-and-omitted-here-is-caught-by-the-identity
+  (testing "this namespace reads a run and not a verdict, so it cannot tell
+            `nil because not a 被保険者` from `nil because somebody forgot`.
+            It does not have to — gross ≠ the sum, and the run is unusable
+            rather than an entry that balances by having lost the difference"
+    (let [r (shiwake/entry-request (insured-run :employees-pension-withheld nil)
+                                   full-mapping)]
+      (is (= :unusable-run (:shiwake/status r)))
+      (is (clojure.string/includes? (:shiwake/why r) "社会保険")))))
+
+(deftest a-run-with-no-social-insurance-still-produces-the-three-line-entry
+  (testing "requiring the two new accounts from every run would refuse entries
+            this namespace produced correctly before 社会保険 existed"
+    (let [req (:shiwake/request (shiwake/entry-request (committed) mapping))]
+      (is (= 3 (count (:lines req)))))))
+
+(deftest a-withheld-contribution-with-no-account-mapped-is-no-mapping
+  (doseq [[label run needle]
+          [["社会保険" (insured-run) ":social-insurance"]
+           ["雇用保険" (insured-run :health-insurance-withheld 0
+                                    :employees-pension-withheld 0
+                                    :net 289780)
+            ":employment-insurance"]]]
+    (testing label
+      (let [r (shiwake/entry-request run mapping)]
+        (is (= :no-mapping (:shiwake/status r)))
+        (is (clojure.string/includes? (:shiwake/why r) needle))))))
+
+(deftest a-zero-social-insurance-total-omits-its-line-like-the-tax-one-does
+  (let [req (:shiwake/request
+             (shiwake/entry-request
+              (insured-run :health-insurance-withheld 0
+                           :employees-pension-withheld 0
+                           :employment-insurance-withheld 0
+                           :net 291580)
+              mapping))]
+    (is (= ["給料手当" "預り金" "未払金"] (mapv :account (:lines req)))
+        "and the unmapped accounts are not required, because no line arises")))
+
+(deftest a-malformed-contribution-is-refused-before-the-arithmetic
+  (doseq [bad [-1 "13860" :none]]
+    (let [r (shiwake/entry-request (insured-run :health-insurance-withheld bad)
+                                   full-mapping)]
+      (is (= :unusable-run (:shiwake/status r)) (str "should refuse " (pr-str bad)))
+      (is (clojure.string/includes? (:shiwake/why r) "non-negative")))))

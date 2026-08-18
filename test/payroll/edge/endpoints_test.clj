@@ -19,6 +19,19 @@
 (def ^:private allowlist
   {"did:key:zAlice" "emp-1" "did:key:zBob" "emp-2"})
 
+(def ^:private insured
+  "社会保険: the operator-registered facts 健康保険法 / 厚生年金保険法 /
+  労働保険徴収法 turn on. Both contracts below carry them, so that what these
+  tests measure stays what they were written to measure — that the edge does
+  not answer the governor's questions — rather than becoming a second copy of
+  the 社会保険 rules."
+  {:employment/health-insurance-insured? true
+   :employment/employees-pension-insured? true
+   :employment/care-insurance-second-category? false
+   :employment/employment-insurance-insured? true
+   :employment/standard-remuneration-monthly-yen 280000
+   :employment/standard-remuneration-month "2026-06"})
+
 (defn- seeded
   "Two employers, each with its own contract and its own worker's timesheets.
   emp-1 declares [:jp]; emp-2's jurisdiction is a parameter so a test can make
@@ -33,18 +46,26 @@
      (store/register-contract!
       (merge (labor/contract "c-1" "worker-1" "emp-1" "baker" :hourly 2000)
              {:employment/recipient-residency :resident
-              :employment/paid-in :domestic}))
+              :employment/paid-in :domestic}
+             insured))
      (store/register-contract!
       (merge (labor/contract "c-2" "worker-2" "emp-2" "engraver" :hourly 3000)
              {:employment/recipient-residency :resident
-              :employment/paid-in :domestic}))
+              :employment/paid-in :domestic}
+             insured))
      (store/register-timesheet! (labor/timesheet "worker-1" "2026-07-01" 8))
      (store/register-timesheet! (labor/timesheet "worker-1" "2026-07-02" 6))
      (store/register-timesheet! (labor/timesheet "worker-2" "2026-07-01" 10)))))
 
 (defn- body [& {:as overrides}]
   (pr-str (merge {:contract-id "c-1" :period "2026-07" :deductions 3000
-                  :income-tax-withheld 8420}
+                  :income-tax-withheld 8420
+                  ;; 280000 × 183 / 2000 = 25620 exactly — 厚生年金保険法
+                  ;; 第八十一条第四項. 介護保険 is absent because `insured`
+                  ;; registers the worker as not a 第二号被保険者.
+                  :health-insurance-withheld 13860
+                  :employees-pension-withheld 25620
+                  :employment-insurance-withheld 168}
                  overrides)))
 
 (defn- submit
@@ -220,7 +241,16 @@
         {:op :draft-payroll-run :effect :propose
          :contract-id (:contract-id request) :period (:period request)
          :gross gross :deductions ded :net (- gross ded)
+         ;; every withholding the request declared, carried through exactly as
+         ;; `payroll.advisor/infer` does. A stand-in advisor that dropped the
+         ;; 社会保険 amounts would turn this escalation into a HOLD — the safe
+         ;; direction, and the reason the governor reads them off the PROPOSAL:
+         ;; whether the proposal accounts for them is the question.
          :income-tax-withheld (:income-tax-withheld request)
+         :health-insurance-withheld (:health-insurance-withheld request)
+         :care-insurance-withheld (:care-insurance-withheld request)
+         :employees-pension-withheld (:employees-pension-withheld request)
+         :employment-insurance-withheld (:employment-insurance-withheld request)
          :stake :high :confidence 0.3
          :rationale "not sure"}))))
 
@@ -814,3 +844,76 @@
       (is (= 200 (:status r)))
       (is (= [:assess-year-end-adjustment] (mapv :op (get-in r [:body :history]))))
       (is (= ["2026"] (mapv :year (get-in r [:body :history])))))))
+
+;; ---------------------------------------------------------------------------
+;; 社会保険 over the wire
+;; ---------------------------------------------------------------------------
+
+(defn- uninsured
+  "The seeded store with emp-1's contract stripped of its 社会保険
+  registrations — the shape every JP employer's record had until 2026-08-18."
+  []
+  (doto (seeded)
+    (store/register-contract!
+     (merge (labor/contract "c-1" "worker-1" "emp-1" "baker" :hourly 2000)
+            {:employment/recipient-residency :resident
+             :employment/paid-in :domestic}))))
+
+(deftest a-run-accounting-only-for-income-tax-is-409-and-pays-nothing
+  (testing "the surface must not serve a 200 for a run that accounts for one
+            of the four withholdings a Japanese payslip carries"
+    (let [st (uninsured)
+          r (submit st "did:key:zAlice" (body))]
+      (is (= 409 (:status r)))
+      (is (empty? (store/records-of st "emp-1")))
+      (is (some #(= :social-insurance-coverage-not-observed (:rule %))
+                (get-in r [:body :violations]))))))
+
+(deftest the-body-says-what-the-social-insurance-law-could-and-could-not-say
+  (testing "`nobody looked`, `we could not read it` and `all four are
+            accounted for` must not share a response body"
+    (testing "answered"
+      (let [b (:body (submit (seeded) "did:key:zAlice" (body)))]
+        (is (= :answered (get-in b [:social-insurance :answer])))
+        (is (true? (get-in b [:social-insurance :answerable?])))
+        (is (empty? (get-in b [:social-insurance :refusals])))
+        (testing "and the list of amounts this workspace can derive is served
+                  rather than a boolean, so a 200 cannot read as `four amounts
+                  were checked`"
+          (is (= [:scheme/employees-pension]
+                 (get-in b [:social-insurance :amounts-computed]))))))
+    (testing "refused, with the key an operator must register"
+      (let [b (:body (submit (uninsured) "did:key:zAlice" (body)))
+            refusals (get-in b [:social-insurance :refusals])]
+        (is (= :refused (get-in b [:social-insurance :answer])))
+        (is (false? (get-in b [:social-insurance :answerable?])))
+        (is (= 4 (count refusals)))
+        (is (every? :missing refusals))
+        (is (contains? (set (map :missing refusals))
+                       :employment/health-insurance-insured?))))
+    (testing "not catalogued"
+      (let [st (seeded store/mem-store [:us])
+            b (:body (submit st "did:key:zBob" (body :contract-id "c-2")))]
+        (is (= :not-catalogued (get-in b [:social-insurance :answer])))
+        (is (str/includes? (get-in b [:social-insurance :why]) "FICA"))))))
+
+(deftest a-committed-run-reports-every-withholding-and-not-just-the-tax
+  (testing "a caller handed back `:income-tax-withheld` alone would have a
+            receipt for a quarter of what left the payslip"
+    (let [b (:body (submit (seeded) "did:key:zAlice" (body)))]
+      (is (= 8420 (:income-tax-withheld b)))
+      (is (= 13860 (:health-insurance-withheld b)))
+      (is (= 25620 (:employees-pension-withheld b)))
+      (is (= 168 (:employment-insurance-withheld b)))
+      (is (contains? b :care-insurance-withheld)
+          "present and nil: this worker is not a 第二号被保険者"))))
+
+(deftest a-social-insurance-amount-is-the-statutes-refusal-not-a-400
+  (testing "whether a run had to account for 健康保険料 at all depends on a
+            REGISTERED fact this route cannot see, so a 400 here would be the
+            edge deciding a question the governor answers with a citation"
+    (doseq [bad [-1 "25620"]]
+      (let [r (submit (seeded) "did:key:zAlice" (body :employees-pension-withheld bad))]
+        (is (= 409 (:status r)) (str (pr-str bad) " must reach the governor"))
+        (is (some #(= :social-insurance-malformed-amount (:rule %))
+                  (get-in r [:body :violations])))))))
