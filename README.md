@@ -79,6 +79,68 @@ missing figure as zero (**3 errors — reddens by NPE, not by assertion, which
 is weaker evidence and recorded as such**), accept a half-filled mapping (2),
 post a zero 預り金 line (3), have the batch discard its skips (1).
 
+## 受領記録 — what the ledger actor did with the entry
+
+**Converted is not posted.** 4311 can post the entry, find it already there,
+hold it against a rule, park it for a human signature, or refuse the request
+outright — and until `payroll.handoff` existed all five looked identical
+from this side, because nothing recorded any of them. That is this plane's
+recurring defect: a step that cannot fail visibly. A handoff whose only
+trace is the request implies success by having no other trace.
+
+`payroll.handoff/handoff-fact` turns **one** 4311 response into a ledger
+fact; `handoff-facts` turns a whole `POST /api/entries` `207` into one fact
+per submission. The caller appends them with the store's existing
+`append-ledger!` — the namespace itself makes no call and touches no store,
+asserted by a source scan like `shiwake`'s.
+
+| 4311 answered | fact records |
+|---|---|
+| `200` `:duplicate? false` | `:posted` + the posting id |
+| `200` `:duplicate? true` | `:duplicate` |
+| `202` | `:awaiting-approval` + the reason |
+| `409` | `:held` + the violations |
+| `400` / `403` / `503` | `:rejected` + the error |
+| anything else | `:unknown-response` + a bounded excerpt |
+
+**Every outcome is a fact, including the good one.** A ledger recording only
+refusals could answer *what went wrong* but not *was this run posted?*,
+which is the question the loop exists to close.
+
+**`:duplicate` is not `:posted`.** One wrote; one confirmed something already
+there. Two `:posted` facts for one run is a double payment; `:posted` then
+`:duplicate` is a safe retry. A `200` carrying no boolean `:duplicate?` is
+`:unknown-response` rather than either — without that flag the two cannot be
+told apart, and guessing fabricates the distinction instead of recording it.
+
+**An unrecognised shape is never a success.** Defaulting the unknown to the
+good outcome is how a ledger fills with postings that were never made.
+
+**The fact carries the same `:client-id` / `:contract-id` / `:period` stamp
+`payroll.actor/identify` writes**, so `store/run-history` and `ledger-of`
+return it; a reconciliation record that cannot be joined back to the thing
+it reconciles is not one. Its `:disposition` is `:handoff` and never one of
+the actor's own three, so a reader counting commits does not count handoffs.
+
+**The batch refuses rather than zips.** Results come back in submission
+order, so position is the only thing joining an outcome to its run — if the
+counts differ, or a result cites a different `:source-doc` than the
+submission at its position, `handoff-facts` returns
+`:length-mismatch` / `:source-doc-mismatch` and **no facts at all**. A fact
+attributed to the wrong run is worse than an absent one, because it is wrong
+in a way that reads as settled. A batch refused whole (`400`/`403`/`503`)
+still produces a fact per submission, marked `:handoff/scope :batch` so that
+*it refused this entry* and *it never saw this entry* stay distinguishable.
+
+Measured, all twelve mutations red (115 tests / 599 assertions green
+unmutated): fold `:duplicate` into `:posted` (4), default an unrecognised
+response to `:posted` (5), accept a `200` that cannot say whether it wrote
+(8), record only refusals (16), zip a length mismatch (4), ignore a
+wrong-`:source-doc` answer (3), drop the identity stamp (14), believe a
+batch result's outcome unchecked (9+**1 error**), record nothing when the
+whole batch was refused (6), let the namespace `slurp` (1), let the excerpt
+grow unbounded (2), stamp a handoff `:commit` (2).
+
 ## The shared governor layer
 
 `:no-client`, `:no-actuation`, `:unknown-contract` and
