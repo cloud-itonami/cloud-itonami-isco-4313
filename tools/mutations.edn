@@ -1,0 +1,97 @@
+;; One mutation per invariant. `:find` must occur EXACTLY ONCE in `:file` —
+;; `tools/mutate.cljs` refuses otherwise, because a mutation that landed in a
+;; comment or in a second call site produces a red suite that proves nothing.
+;;
+;; Read the pair before trusting a red: the thing broken and the thing
+;; reported must be the same thing.
+;;
+;; ## SCOPE — this table does not cover the whole repository
+;;
+;; It covers `POST /api/handoff` — the route that brings back what
+;; `cloud-itonami-isco-4311` did with a payroll run this actor emitted, and
+;; the only thing that makes `payroll.handoff` reachable from anywhere. The
+;; governor, the advisor, the store, `payroll.shiwake` and the pure
+;; `payroll.handoff` all have suites but no mutations here, so a clean run of
+;; this table means "every invariant of the hand-off ROUTE is measured" and
+;; NOT "every invariant of this actor is measured". Reading it as the second
+;; would be exactly the defect the harness exists to catch: a check that did
+;; not look reporting the same value as one that looked and found nothing.
+[{:id :handoff-is-routed
+  :invariant "the route exists — without it the reconciliation reaches nothing"
+  :file "src/payroll/edge/endpoints.cljc"
+  :find "(= path \"/api/handoff\")"
+  :replace "(= path \"/api/handoff-disabled\")"}
+
+ {:id :handoff-writes-to-the-ledger
+  :invariant "the facts are appended, not merely computed and returned"
+  :file "src/payroll/edge/endpoints.cljc"
+  :find "(doseq [f facts] (store/append-ledger! store f))"
+  :replace "(doseq [f []] (store/append-ledger! store f))"}
+
+ {:id :employer-comes-from-the-did
+  :invariant "the body cannot write into another employer's ledger slice"
+  :file "src/payroll/edge/endpoints.cljc"
+  :find "(assoc (handoff/handoff-fact submission response)\n                                   :client-id client-id)"
+  :replace "(merge {:client-id client-id}\n                                   (handoff/handoff-fact submission response))"}
+
+ {:id :a-refused-body-writes-nothing
+  :invariant "a 400 appends nothing — half a batch is worse than none"
+  :file "src/payroll/edge/endpoints.cljc"
+  :find "(if error\n        {:status 400 :body {:ok false :error error}}"
+  :replace "(if false\n        {:status 400 :body {:ok false :error error}}"}
+
+ {:id :handoffs-must-be-a-vector
+  :invariant "a :handoffs that is not a vector is a 400, not an empty success"
+  :file "src/payroll/edge/endpoints.cljc"
+  :find "(not (vector? (:handoffs m))) {:error \"body must carry a :handoffs vector\"}"
+  :replace "(not (coll? (:handoffs m))) {:error \"body must carry a :handoffs vector\"}"}
+
+ {:id :an-empty-batch-is-refused
+  :invariant "an empty :handoffs is a caller error, not a recorded nothing"
+  :file "src/payroll/edge/endpoints.cljc"
+  :find "(empty? (:handoffs m)) {:error \":handoffs must not be empty\"}"
+  :replace "(empty? nil) {:error \":handoffs must not be empty\"}"}
+
+ {:id :each-pair-must-carry-a-submission
+  :invariant "a pair with no submission is a 400 before anything is appended"
+  :file "src/payroll/edge/endpoints.cljc"
+  :find "(not (every? #(map? (:submission %)) (:handoffs m)))"
+  :replace "(not (every? #(some? %) (:handoffs m)))"}
+
+ {:id :a-non-map-response-is-the-callers-error
+  :invariant "a malformed request is not recorded as an odd answer from 4311"
+  :file "src/payroll/edge/endpoints.cljc"
+  :find "(not (every? #(map? (:response %)) (:handoffs m)))"
+  :replace "(not (every? #(some? %) (:handoffs m)))"}
+
+ {:id :duplicate-is-resolved
+  :invariant ":unresolved is what a person must look at; a duplicate is settled"
+  :file "src/payroll/edge/endpoints.cljc"
+  :find "(contains? #{:posted :duplicate}\n                                                        (:handoff/outcome %))"
+  :replace "(contains? #{:posted}\n                                                        (:handoff/outcome %))"}
+
+ {:id :posted-is-resolved
+  :invariant "and a success is settled too — :unresolved is not `everything`"
+  :file "src/payroll/edge/endpoints.cljc"
+  :find "#{:posted :duplicate}\n                                                        (:handoff/outcome %))"
+  :replace "#{:duplicate}\n                                                        (:handoff/outcome %))"}
+
+ {:id :handoff-needs-an-allowlist
+  :invariant "an unconfigured deployment is 503, not an open write path"
+  :file "src/payroll/edge/endpoints.cljc"
+  :find "    (nil? allowlist)\n    {:status 503 :body {:ok false :error \"no allow-list configured\"}}\n\n    (nil? (employer-for allowlist caller-did))\n    {:status 403 :body {:ok false :error \"caller not permitted\"}}\n\n    :else\n    (let [{:keys [pairs error]}"
+  :replace "    (nil? nil)\n    {:status 503 :body {:ok false :error \"no allow-list configured\"}}\n\n    (nil? (employer-for allowlist caller-did))\n    {:status 403 :body {:ok false :error \"caller not permitted\"}}\n\n    :else\n    (let [{:keys [pairs error]}"
+
+ }
+
+ {:id :handoff-refuses-an-unlisted-caller
+  :invariant "an unlisted DID cannot append to anyone's ledger"
+  :file "src/payroll/edge/endpoints.cljc"
+  :find "    (nil? (employer-for allowlist caller-did))\n    {:status 403 :body {:ok false :error \"caller not permitted\"}}\n\n    :else\n    (let [{:keys [pairs error]}"
+  :replace "    (nil? nil)\n    {:status 403 :body {:ok false :error \"caller not permitted\"}}\n\n    :else\n    (let [{:keys [pairs error]}"}
+
+ {:id :a-handoff-is-not-a-commit
+  :invariant "a reader counting what this actor paid must not count these"
+  :file "src/payroll/handoff.cljc"
+  :find "(merge {:disposition :handoff}"
+  :replace "(merge {:disposition :commit}"}]

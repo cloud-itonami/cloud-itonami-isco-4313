@@ -1,9 +1,11 @@
 (ns payroll.edge.endpoints
-  "The HTTP surface this payroll actor exposes — exactly three routes:
+  "The HTTP surface this payroll actor exposes — exactly four routes:
 
       POST /api/payroll-run             draft a payroll run
       GET  /api/payroll-run/:contract-id  the whole life of one contract's runs
       GET  /api/ledger                  the caller's own slice of the ledger
+      POST /api/handoff                 what the ledger actor answered about
+                                        runs this employer submitted
 
   and nothing else. Per `manifest/repository-rules.edn` an itonami actor is
   `:on-demand`: it answers a request and stops.
@@ -16,10 +18,12 @@
   host binding this repo does not yet carry, and inventing an untested one
   would be worse than saying so.
 
-  ## Why one write route, and why the other two ops have none
+  ## Why one op has a write route, and why the other two have none
 
-  Of this actor's three ops only `:draft-payroll-run` both needs a network path
-  and is something the governor actually checks:
+  `POST /api/handoff` writes to the ledger but runs no op: it records what
+  another actor answered, and reaches neither the graph nor the governor nor
+  any money. Of this actor's three actual ops only `:draft-payroll-run` both
+  needs a network path and is something the governor actually checks:
 
     :draft-payroll-run     the employer's timekeeping system has to reach the
                            actor, and a clean run auto-commits. The governor
@@ -90,6 +94,7 @@
   green tick."
   (:require [payroll.actor :as actor]
             [payroll.store :as store]
+            [payroll.handoff :as handoff]
             #?(:clj [clojure.edn :as edn] :cljs [cljs.reader :as edn])))
 
 ;; ---------------------------------------------------------------------------
@@ -460,6 +465,107 @@
                              entries)}})))
 
 ;; ---------------------------------------------------------------------------
+;; Bringing the ledger actor's answer back
+;; ---------------------------------------------------------------------------
+
+(defn parse-handoff-body
+  "Read a `POST /api/handoff` body into `{:pairs [...]}` or `{:error \"…\"}`.
+
+  Shape:
+
+      {:handoffs [{:submission {…} :response {:status n :body {…}}} …]}
+
+  **Each pair names its own submission.** The batch route zips the ledger
+  actor's results against the submissions by position and refuses the whole
+  batch when the counts or the source documents disagree, because a fact
+  attributed to the wrong run is worse than an absent one. Here the carrier
+  states the pairing, so the misattribution the batch form has to detect
+  cannot arise: there is no position to get wrong.
+
+  Read with `clojure.edn/read-string`, which evaluates nothing.
+
+  A pair whose `:response` is not a map is an error rather than a fact,
+  because `payroll.handoff` would read a nil status as an unrecognised
+  response and record `:unreadable` — indistinguishable from the ledger
+  actor genuinely answering something odd. The two are different problems
+  and only one of them is this actor's caller's."
+  [s]
+  (let [m (try (edn/read-string s) (catch #?(:clj Exception :cljs :default) _ ::bad))]
+    (cond
+      (= ::bad m) {:error "unparseable body"}
+      (not (map? m)) {:error "body must be a map"}
+      (not (vector? (:handoffs m))) {:error "body must carry a :handoffs vector"}
+      (empty? (:handoffs m)) {:error ":handoffs must not be empty"}
+      (not (every? map? (:handoffs m))) {:error "each handoff must be a map"}
+      (not (every? #(map? (:submission %)) (:handoffs m)))
+      {:error "each handoff must carry a :submission map"}
+      (not (every? #(map? (:response %)) (:handoffs m)))
+      {:error "each handoff must carry a :response map"}
+      :else {:pairs (:handoffs m)})))
+
+(defn record-handoff-core!
+  "`POST /api/handoff`. Record what the ledger actor answered about runs this
+  employer submitted.
+
+    503  no allow-list configured
+    403  caller not on the allow-list
+    400  unreadable body — **nothing is appended**
+    200  the facts recorded, with the ones a person still has to look at
+
+  ## Why the route points this way
+
+  `payroll.handoff` is pure and calls nothing, deliberately: posting into
+  another actor's ledger is actuation this repo does not do. But a namespace
+  that calls nothing and that nothing calls is reachable from nowhere, and
+  the reconciliation it computes never reaches the audit trail. So the
+  carrier that already holds both halves brings the answer here instead.
+
+  ## The employer still comes from the DID
+
+  `:client-id` is stamped from the allow-list and overwrites whatever the
+  submission carried. `payroll.store/ledger-of` slices the ledger by exactly
+  that key, so a body-chosen employer would write one client's reconciliation
+  into another client's books — the same refusal as
+  `the employer comes from the DID` on the run route, at the one place a
+  caller can still hand this actor a `:client-id`.
+
+  ## Every outcome is written, not only the bad ones
+
+  A ledger that records refusals and drops the successes cannot answer
+  `was this run recorded downstream`, which is the question the whole seam
+  exists for. `:disposition` stays `:handoff`, so a reader counting commits
+  never counts these.
+
+  `:unresolved` names the facts that are neither `:posted` nor `:duplicate`,
+  so the carrier learns in the same round-trip which runs a person has to
+  look at."
+  [store allowlist caller-did raw-body]
+  (cond
+    (nil? allowlist)
+    {:status 503 :body {:ok false :error "no allow-list configured"}}
+
+    (nil? (employer-for allowlist caller-did))
+    {:status 403 :body {:ok false :error "caller not permitted"}}
+
+    :else
+    (let [{:keys [pairs error]} (parse-handoff-body raw-body)]
+      (if error
+        {:status 400 :body {:ok false :error error}}
+        (let [client-id (employer-for allowlist caller-did)
+              facts (mapv (fn [{:keys [submission response]}]
+                            (assoc (handoff/handoff-fact submission response)
+                                   :client-id client-id))
+                          pairs)]
+          (doseq [f facts] (store/append-ledger! store f))
+          {:status 200
+           :body {:employer client-id
+                  :recorded (count facts)
+                  :outcomes (frequencies (map :handoff/outcome facts))
+                  :unresolved (filterv #(not (contains? #{:posted :duplicate}
+                                                        (:handoff/outcome %)))
+                                       facts)}})))))
+
+;; ---------------------------------------------------------------------------
 ;; The surface itself
 ;; ---------------------------------------------------------------------------
 
@@ -481,7 +587,7 @@
   not to guess a storage backend is testable without a platform.
 
   Having one dispatcher rather than three exported handlers is what makes
-  `there are exactly three routes` a testable claim instead of a sentence in a
+  `there are exactly four routes` a testable claim instead of a sentence in a
   README. A path nobody declared is 404 and a method nobody declared is 405 —
   distinct, because `POST /api/ledger` is a caller using the wrong verb on a
   real route and `POST /api/disburse` is a caller inventing one that this actor
@@ -493,6 +599,11 @@
       (= path "/api/payroll-run")
       (if (= method :post)
         (submit-payroll-run-core! store mode allowlist caller-did body)
+        {:status 405 :body {:ok false :error "method not allowed" :allow [:post]}})
+
+      (= path "/api/handoff")
+      (if (= method :post)
+        (record-handoff-core! store allowlist caller-did body)
         {:status 405 :body {:ok false :error "method not allowed" :allow [:post]}})
 
       (= path "/api/ledger")
