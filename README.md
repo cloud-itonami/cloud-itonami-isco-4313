@@ -12,7 +12,7 @@ cloud-itonami-isco-4311's bookkeeping actor. **Consumes
 `kotoba-lang/labor`** (contracts / timesheets / wages / payroll) per
 the fleet's capability-library-wrapping convention (same as
 cloud-itonami-isic-9700) — wage arithmetic is never reinvented here.
-83 tests / 408 assertions green.
+93 tests / 443 assertions green.
 
 The payroll-specific HARD invariant: **the governor recomputes wages
 deterministically via `kotoba.labor/wages-for` from the REGISTERED
@@ -25,6 +25,59 @@ uncatalogued declared jurisdiction, and a run that does not account for
 withheld income tax where the law requires it (see 源泉徴収 below).
 Escalations (always human sign-off): `:disburse-wages` (real fund
 movement), low confidence (< 0.6).
+
+## 仕訳 — an approved payroll run becoming a journal entry
+
+Deciding is not bookkeeping. **A payroll run that was approved and never
+became an entry is wages nobody's books show, and withholding nobody's books
+owe.** `payroll.shiwake/entry-request` produces the `:draft-entry` request
+[`cloud-itonami-isco-4311`](https://github.com/cloud-itonami/cloud-itonami-isco-4311)
+accepts.
+
+### Three lines, not two
+
+An expense claim is one debit and one credit. Payroll is not:
+
+```text
+借方  給料手当     gross
+貸方  預り金       income tax withheld   ← 所得税法 第百八十三条第一項
+貸方  未払金       net
+```
+
+第百八十三条第一項 obliges the payer to 徴収し … 国に納付しなければならない.
+Withheld tax is therefore **not a reduction of the expense** — it is a
+liability owed to the state until remitted. Netting it into one credit line
+would make that liability vanish from the balance sheet while the obligation
+continued to exist. Measured: collapsing it to two lines reddens
+`withheld-tax-becomes-a-liability-not-a-smaller-expense`.
+
+A **zero** withholding line is omitted rather than posted: 預り金 0 asserts a
+liability of nothing, which is a different claim from having none.
+
+### The withheld amount is carried, never computed
+
+`kotoba-lang/taxlaw` records `:taxlaw/amount-checked? false` — 別表第二 and
+別表第五 were not read, so nothing in this fleet certifies how much should
+have been withheld. This namespace inherits that exactly: it moves the
+figure the run declared and computes none of it. A test scans the source to
+keep it that way.
+
+It also checks `gross = withheld + net` here rather than leaving it to the
+ledger. 4311 would refuse the unbalanced result, but the message would be
+about currency arithmetic instead of *this run's figures disagree*.
+
+### It produces a value; it makes no call
+
+No HTTP, no client, no reference to 4311 — asserted by a test scanning the
+namespace's own source. A call would make the accounts this actor's business
+when they are the client's chart, and `kotoba-lang/shohyo` refuses to guess
+what an account is because a statement that guessed still balances.
+
+Measured, all seven mutations red: net the withholding away (2), emit for an
+unapproved run (8), skip the gross = withheld + net check (3+1), treat a
+missing figure as zero (**3 errors — reddens by NPE, not by assertion, which
+is weaker evidence and recorded as such**), accept a half-filled mapping (2),
+post a zero 預り金 line (3), have the batch discard its skips (1).
 
 ## The shared governor layer
 
