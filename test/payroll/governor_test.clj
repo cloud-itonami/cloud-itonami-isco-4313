@@ -1,5 +1,6 @@
 (ns payroll.governor-test
-  (:require [clojure.test :refer [deftest is testing]]
+  (:require [clojure.string :as str]
+            [clojure.test :refer [deftest is testing]]
             [clojure.string]
             [kotoba.labor :as labor]
             [payroll.store :as store]
@@ -272,3 +273,58 @@
                             {:op :reconcile-timesheets :effect :propose
                              :confidence 0.9} (jp-store))]
       (is (nil? (:tax v))))))
+
+;; ---------------------------------------------------------------------------
+;; Two more jurisdictions in taxlaw, and the sentence that became false
+;;
+;; `kotoba-lang/taxlaw` gained `[:eu]` and `[:us]`, and made coverage per
+;; FACET rather than per jurisdiction. Neither instrument's withholding rule
+;; was read — the VAT Directive is not a payroll instrument, and IRC §3402 was
+;; not opened — so both are `:out-of-scope` and both are still held.
+;;
+;; What changed is the explanation. "kotoba.taxlaw に無い" is now false for
+;; the United States, and for payroll that is the expensive direction to be
+;; wrong in: the US **does** oblige an employer to withhold. An operator told
+;; the jurisdiction is unknown may conclude no obligation exists.
+;; ---------------------------------------------------------------------------
+
+(deftest a-us-payroll-run-is-held-and-told-why-it-could-not-be-checked
+  (let [st (jp-store {:jurisdiction [:us]} {})
+        v (governor/check {:client-id "emp-jp"} {} (jp-proposal) st)
+        hit (first (filter #(= :unchecked-jurisdiction (:rule %)) (:violations v)))]
+    (is (:hard? v))
+    (is (some? hit))
+    (is (= :jurisdiction/wage-withholding (:taxlaw/out-of-scope hit)))
+    (testing "the reason names the provision nobody read, not a missing country"
+      (is (str/includes? (:detail hit) "3402"))
+      (is (not (str/includes? (:detail hit) "kotoba.taxlaw に無い"))))
+    (testing "and says out loud that unread is not absent — the whole risk here"
+      (is (str/includes? (:detail hit) "義務が無いという意味ではない")))
+    (testing "rule 6 still does not fire; taxlaw could not check it"
+      (is (not (some #(= :income-tax-not-withheld (:rule %)) (:violations v)))))))
+
+(deftest an-eu-payroll-run-is-held-too-and-for-its-own-reason
+  (testing "the VAT Directive is not a payroll instrument. Being catalogued
+            for invoicing says nothing about withholding"
+    (let [st (jp-store {:jurisdiction [:eu]} {})
+          hit (first (filter #(= :unchecked-jurisdiction (:rule %))
+                             (:violations (governor/check {:client-id "emp-jp"} {}
+                                                          (jp-proposal) st))))]
+      (is (some? hit))
+      (is (= :jurisdiction/wage-withholding (:taxlaw/out-of-scope hit)))
+      (is (str/includes? (:detail hit) "VAT")))))
+
+(deftest a-jurisdiction-genuinely-absent-still-says-it-is-absent
+  (testing "the old sentence is right where it is right, and a test keeps it
+            from being replaced wholesale by the new one"
+    (let [hit (first (filter #(= :unchecked-jurisdiction (:rule %))
+                             (:violations (governor/check
+                                           {:client-id "emp-jp"} {} (jp-proposal)
+                                           (jp-store {:jurisdiction [:atlantis]} {})))))]
+      (is (nil? (:taxlaw/out-of-scope hit)))
+      (is (str/includes? (:detail hit) "kotoba.taxlaw に無い")))))
+
+(deftest a-clean-jp-run-is-untouched-by-any-of-this
+  (testing "the bump must not move the one jurisdiction that was working"
+    (is (:ok? (governor/check {:client-id "emp-jp"} {}
+                              (jp-proposal :income-tax-withheld 8420) (jp-store))))))
