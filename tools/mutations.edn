@@ -22,6 +22,27 @@
 ;;      (added 2026-08-18). This is the block where `:ok? true` stopped
 ;;      meaning `one of four`, so it is the block where a surviving mutation
 ;;      would mean the change was never measured.
+;;   5. 賃金の基礎 (rule 15), `payroll.provenance`, the artifact writers, the
+;;      accessibility floor, `payroll.touroku`, the host's fail-closed
+;;      configuration, the console's origin check and the MoneyForward
+;;      boundary (added 2026-08-25 — the fourteen entries at the end of this
+;;      table).
+;;
+;; ## Measured 2026-08-25
+;;
+;; The fourteen new entries were each run alone against a green baseline
+;; (489 tests / 2,299 assertions). **All fourteen kill.** So did the two
+;; older entries whose `:find` anchors this change moved
+;; (`:social-insurance-is-not-nested-under-tax` and
+;; `:social-insurance-refusals-reach-the-verdict`) after they were repaired
+;; — a mutation whose `:find` is absent is UNMEASURED, not passing, and the
+;; harness refusing it is how both were caught.
+;;
+;; One entry was UNMEASURED on its first run and then fixed rather than left:
+;; `:state-is-never-conveyed-by-colour-alone` wrapped the `finding` call in a
+;; `(when false …)`, which left the form unbalanced, so the reader failed and
+;; nothing was measured. It now mutates the `:when` clause instead and kills
+;; two tests. A mutation that breaks the build demonstrates the build.
 ;;
 ;; What is NOT covered, and would be measured by nothing if this table were
 ;; read as a whole-repo verdict: the wage/net arithmetic rules, the advisor,
@@ -486,8 +507,8 @@
  {:id :social-insurance-refusals-reach-the-verdict
   :invariant "shakai-hoken の refusal が HARD violation になる"
   :file "src/payroll/governor.cljc"
-  :find "     (if hoken (social-insurance-violations hoken) []))))"
-  :replace "     (if false (social-insurance-violations hoken) []))))"}
+  :find "     (if hoken (social-insurance-violations hoken) [])"
+  :replace "     (if false (social-insurance-violations hoken) [])"}
 
  ;; The rule NAMES matter: an operator reads them.
  {:id :the-coverage-rule-is-named-not-unclassified
@@ -500,8 +521,13 @@
  {:id :social-insurance-is-not-nested-under-tax
   :invariant "verdict の :social-insurance は :tax の子ではない"
   :file "src/payroll/governor.cljc"
-  :find "        {:social-insurance\n         (cond"
-  :replace "        {:tax-social-insurance\n         (cond"}
+  ;; The anchor moved on 2026-08-25: `:wage-basis` was inserted ahead of
+  ;; `:social-insurance` in the verdict's `:extra`, so the old `:find`
+  ;; (`{:social-insurance`, with the opening brace) no longer occurs. A
+  ;; mutation whose `:find` is absent is UNMEASURED, not passing — the
+  ;; harness refuses it rather than scoring it, which is how this was caught.
+  :find "\n         :social-insurance\n         (cond"
+  :replace "\n         :tax-social-insurance\n         (cond"}
 
  ;; 仕訳: the identity that catches a contribution deducted and not posted.
  {:id :the-journal-identity-counts-social-insurance
@@ -517,4 +543,118 @@
   :file "src/payroll/shiwake.cljc"
   :find "                 (pos? ei-total)\n                 (conj {:side :cr :account employment-insurance"
   :replace "                 (and false (pos? ei-total))\n                 (conj {:side :cr :account employment-insurance"}
+
+ ;; --------------------------------------------------------------------------
+ ;; Added 2026-08-25 with the operator console, the artifacts and the
+ ;; MoneyForward boundary. Same scope rule as the header: a clean run means
+ ;; every invariant listed here is measured, never that this actor is.
+ ;; --------------------------------------------------------------------------
+
+ ;; 賃金の基礎 (rule 15). Rule 4 proves the advisor did not invent the number;
+ ;; this is the rule that notices the number ignores a registered fact.
+ {:id :a-registered-premium-fact-holds-the-run
+  :invariant "gross が無視している登録事実があれば run は保留される"
+  :file "src/payroll/governor.cljc"
+  :find "     (if (and basis (not (:chingin/certifiable? basis)))"
+  :replace "     (if (and basis false (not (:chingin/certifiable? basis)))"}
+
+ ;; An omitted report and a satisfied rule look the same.
+ {:id :every-draft-verdict-reports-the-wage-basis
+  :invariant "月給 run で勤怠が読まれていないことが verdict に出る"
+  :file "src/payroll/governor.cljc"
+  :find "\n         :wage-basis\n         (cond"
+  :replace "\n         :wage-basis-omitted\n         (cond"}
+
+ ;; The constructor refusal that keeps an unknown figure from rendering as a
+ ;; number in every view that reads `:figure/amount` first.
+ {:id :a-numberless-provenance-may-not-carry-a-number
+  :invariant ":unknown / :held / :not-applicable は金額を持てない"
+  :file "src/payroll/provenance.cljc"
+  :find "  (when (and (some? amount) (contains? numberless provenance))"
+  :replace "  (when (and false (some? amount) (contains? numberless provenance))"}
+
+ ;; A summary somebody types into a payment must not under-report.
+ {:id :a-total-refuses-rather-than-under-reporting
+  :invariant "未確定を含む合計は合計ではない"
+  :file "src/payroll/provenance.cljc"
+  :find "    (if (seq blocked)"
+  :replace "    (if (and false (seq blocked))"}
+
+ ;; A blank cell is read as zero by the person opening it.
+ {:id :an-unknown-figure-is-never-an-empty-cell
+  :invariant "未確定の金額は空欄ではなく「未確定」と印字される"
+  :file "src/payroll/artifact/text.cljc"
+  :find "    (:unknown :held) unknown-cell"
+  :replace "    (:unknown :held) \"\""}
+
+ ;; The evidence floor. A checker handed nothing finds nothing.
+ {:id :an-empty-accessibility-scan-is-not-a-pass
+  :invariant "走査対象ゼロは合格ではない"
+  :file "src/payroll/ui/a11y.cljc"
+  :find "  (and (empty? (:a11y/findings result))\n       (pos? (get-in result [:a11y/scanned :elements] 0))))"
+  :replace "  (empty? (:a11y/findings result)))"}
+
+ ;; A state that reaches the operator only as a colour does not reach an
+ ;; operator who cannot see the colour.
+ {:id :state-is-never-conveyed-by-colour-alone
+  :invariant "状態クラスを持つ要素はテキストか aria-label を持つ"
+  :file "src/payroll/ui/a11y.cljc"
+  ;; The `:when` clause and not the `finding` call: wrapping the call in a
+  ;; `(when false …)` leaves the form unbalanced, the reader fails, and the
+  ;; harness scores it UNMEASURED — correctly, since a mutation that breaks
+  ;; the build demonstrates the build. Measured 2026-08-25.
+  :find "                :when (and (some (fn [p] (some #(str/starts-with? % p) cs))"
+  :replace "                :when (and false (some (fn [p] (some #(str/starts-with? % p) cs))"}
+
+ ;; A reconciliation over zero compared runs would print like a perfect month.
+ {:id :a-reconciliation-over-nothing-is-not-a-pass
+  :invariant "突合できた run が 0 件なら reconciled? は false"
+  :file "src/payroll/mf/reconcile.cljc"
+  :find "            (zero? compared)"
+  :replace "            (and false (zero? compared))"}
+
+ ;; The state every held run lands in, and the one a naive reconciliation
+ ;; would score as agreement.
+ {:id :a-held-figure-is-never-scored-as-agreement
+  :invariant "当 actor が保留した項目は「一致」にならない"
+  :file "src/payroll/mf/reconcile.cljc"
+  :find "      (assoc base :field/verdict :not-comparable\n             :field/why (str label \"について当 actor は数字を出していない: \""
+  :replace "      (assoc base :field/verdict :agree\n             :field/why (str label \"について当 actor は数字を出していない: \""}
+
+ ;; No column name has been checked against a real export.
+ {:id :no-moneyforward-column-is-marked-verified
+  :invariant "MF の列名はすべて未検証である"
+  :file "src/payroll/mf/schema.cljc"
+  :find "  [{:mf/column \"従業員番号\" :mf/to :employee-number :mf/kind :identity\n    :mf/required? true :mf/verified? false}"
+  :replace "  [{:mf/column \"従業員番号\" :mf/to :employee-number :mf/kind :identity\n    :mf/required? true :mf/verified? true}"}
+
+ ;; The registration layer is not a second governor.
+ {:id :registration-does-not-default-a-coverage-flag
+  :invariant "未登録の被保険者資格を false で埋めない"
+  :file "src/payroll/touroku.cljc"
+  :find "         :touroku/record (merge m stamp)"
+  :replace "         :touroku/record (merge {:employment/health-insurance-insured? false} m stamp)"}
+
+ ;; Widening the bind address without the acknowledgement makes the trusted
+ ;; header trustworthy by nothing.
+ {:id :a-non-loopback-bind-needs-an-acknowledgement
+  :invariant "loopback 以外への bind は PAYROLL_TRUST_FORWARDED を要する"
+  :file "src/payroll/host/config.cljc"
+  :find "      (and (not loopback?) (not forwarded-ack?))"
+  :replace "      (and false (not loopback?) (not forwarded-ack?))"}
+
+ ;; The one thing on this surface a page on another origin could trigger.
+ {:id :the-console-refuses-a-cross-origin-post
+  :invariant "別 origin からのフォーム POST は拒否される"
+  :file "src/payroll/edge/console.cljc"
+  :find "    (and (= :post method) (not (same-origin? origin self-origin)))"
+  :replace "    (and false (= :post method) (not (same-origin? origin self-origin)))"}
+
+ ;; A plausible-looking 明細書 whose title asserts statutory compliance is the
+ ;; most expensive kind of wrong this repository can be.
+ {:id :the-payslip-does-not-claim-to-be-a-statutory-form
+  :invariant "給与支払明細書は法定様式であると主張しない"
+  :file "src/payroll/artifact/payslip.cljc"
+  :find "      [:statutory_form false]"
+  :replace "      [:statutory_form true]"}
 ]
