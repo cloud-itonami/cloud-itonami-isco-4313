@@ -64,6 +64,15 @@
                               厚生年金保険料 / 雇用保険料 is HELD. **:ok? true
                               stopped meaning `one of four` on 2026-08-18.**
 
+  HARD invariant for :draft-payroll-run (賃金の基礎, see 賃金 below):
+   15. accounted-for basis — a run whose `:gross` provably ignores a fact an
+                              operator REGISTERED is HELD. Rule 4 proves the
+                              advisor did not invent the number; it says
+                              nothing about whether the number is the wage,
+                              and `kotoba.labor/wages-for` is four lines that
+                              read `:contract/rate` and `:ts/hours` and
+                              nothing else.
+
   ESCALATION invariants (:escalate? true, human sign-off):
    15. :op :disburse-wages  (real fund movement — always human).
    16. low confidence (< `confidence-floor`).
@@ -202,9 +211,48 @@
   the REQUEST for this op and not by the proposal, because an assessment has
   no arithmetic for the governor to recompute — nothing the advisor writes is
   load-bearing — and an advisor that could name the contract would be the
-  thing deciding whose 年末調整 gets looked at."
+  thing deciding whose 年末調整 gets looked at.
+
+  ## 賃金 (rule 15) — what rule 4 does not check
+
+  Rule 4 is exact and it is about AGREEMENT: the advisor's `:gross` must equal
+  what `kotoba.labor/wages-for` recomputes from the registered timesheets. It
+  proves nobody invented a number. It cannot prove the number is the wage,
+  because both sides compute it the same way, and the way is four lines:
+
+      hourly   :contract/rate × Σ :ts/hours
+      monthly  :contract/rate                  ← timesheets are IGNORED
+
+  For the monthly salaried employee this repository is being pointed at, that
+  is right almost every month and silently wrong in the ones that are not
+  almost every month — a mid-month start, unpaid leave, 欠勤. The figure does
+  not become uncertain in those months; **it stays confident and becomes
+  wrong**, and rule 4 agrees with it, because rule 4 is checking the advisor
+  and not the world.
+
+  `payroll.chingin` holds the reading. What is HERE is only that each of its
+  refusals is a hold, exactly as rules 7-11 are for `payroll.nenmatsu` and
+  12-14 for `payroll.shakai-hoken`.
+
+  It fires on a NARROWER condition than rules 5, 6 and 12-14: a
+  `:draft-payroll-run` citing a valid REGISTERED contract, with no requirement
+  that the employer declare a jurisdiction. Ignoring a registered overtime
+  hour is arithmetic, not law — the figure fails to account for its own
+  registered inputs whether or not anybody said where the wages are paid — so
+  scoping it to a declared jurisdiction would make declaring nothing the
+  cheapest way to skip it.
+
+  It is scoped to a VALID contract for rule 3's reason: an invalid or absent
+  contract already holds the run, and a further violation about the wage basis
+  of employment that does not exist would bury the one that matters.
+
+  Nothing here reads a statute. `payroll.chingin` NAMES the articles that would
+  have to be read to price the ignored facts and records them as unread;
+  naming an unread article is not enforcing it, and no multiplier appears in
+  either namespace."
   (:require [kotoba.labor :as labor]
             [kotoba.taxlaw :as taxlaw]
+            [payroll.chingin :as chingin]
             [payroll.nenmatsu :as nenmatsu]
             [payroll.shakai-hoken :as hoken]
             [payroll.store :as store]
@@ -268,6 +316,41 @@
                             missing (str "。登録が要る: " (pr-str missing)))}
            scheme (assoc :shakai-hoken/scheme scheme)))))
 
+(def chingin-refusal-rules
+  "Which HARD rule each `payroll.chingin` refusal becomes.
+
+  Driven off `chingin/refusals` rather than off a `cond` here, for
+  `refusal-rules`' and `hoken-refusal-rules`' reason: a refusal that namespace
+  adds and this map has not classified is caught by
+  `payroll.governor-test/every-chingin-refusal-has-a-hard-rule` instead of
+  silently committing. Adding an answer must not widen a pass."
+  {:premium-not-priced :wage-basis-unaccounted
+   :unknown-wage-type :wage-basis-uncomputable})
+
+(defn- wage-basis-violations
+  "One HARD violation per registered fact the gross figure provably ignores,
+  or one for a wage type nothing can compute.
+
+  Every detail names the fact, what an operator registered for it, and the
+  provision that would have to be READ to price it — marked as unread. That
+  last part is the difference between an instruction and a complaint: an
+  operator told `時間外労働が計上されていない` can go and look, and an operator
+  told which article nobody has read knows that looking will not be enough."
+  [assessment]
+  (let [rule (get chingin-refusal-rules (:chingin/answer assessment)
+                  :unclassified-wage-basis-refusal)]
+    (if (= :unknown-wage-type (:chingin/answer assessment))
+      [{:rule rule
+        :chingin/answer (:chingin/answer assessment)
+        :detail (:chingin/why assessment)}]
+      (vec (for [{:premium/keys [key label registered provision-not-read why]}
+                 (:chingin/unaccounted assessment)]
+             {:rule rule
+              :chingin/answer (:chingin/answer assessment)
+              :chingin/premium key
+              :detail (str label "（" provision-not-read "・未読）: " why
+                           "。登録値: " (pr-str registered))})))))
+
 (defn- hard-violations [{:keys [request proposal]} client-record contract-record store]
   (let [{:keys [op contract-id gross deductions net]} proposal
         draft? (= :draft-payroll-run op)
@@ -282,6 +365,15 @@
                 (hoken/assess {:jurisdiction juris
                                :contract contract-record
                                :proposal proposal}))
+        ;; 賃金. NOT scoped to a declared jurisdiction — see rule 15 in the ns
+        ;; docstring. Scoped to a VALID contract, because rule 3 already holds
+        ;; a run whose contract is absent or invalid.
+        basis (when (and draft? contract-record validation
+                         (:labor/valid? validation))
+                (chingin/assess
+                 {:contract contract-record
+                  :timesheets (store/timesheets-of
+                               store (:contract/worker contract-record))}))
         ;; nil unless the employer declared where it pays wages — that
         ;; declaration is the asserted condition these two rules fire on.
         withholding (when (and draft? juris)
@@ -371,7 +463,15 @@
      ;; is a hold — there are no soft ones, for the reason rule 6 gives: an
      ;; unanswered question about a lawful deduction from someone's wages is
      ;; not a zero.
-     (if hoken (social-insurance-violations hoken) []))))
+     (if hoken (social-insurance-violations hoken) [])
+
+     ;; 15. 賃金の基礎. Every refusal `payroll.chingin` returns is a hold, for
+     ;; the same reason one step earlier in the payslip: a gross figure that
+     ;; leaves out hours somebody worked is not a smaller wage, it is an
+     ;; unanswered question about what they are owed.
+     (if (and basis (not (:chingin/certifiable? basis)))
+       (wage-basis-violations basis)
+       []))))
 
 (def assessment-op
   "The op that evaluates 所得税法 第百九十条. Named once so the edge, the
@@ -450,6 +550,8 @@
         assess-contract (when assess?
                           (some->> (:contract-id request)
                                    (store/contract-of store)))
+        draft-validation (when (and draft? contract-record)
+                           (labor/validate-contract contract-record))
         assessment (when assess?
                      (nenmatsu/assess
                       {:jurisdiction juris
@@ -479,7 +581,40 @@
         ;; would reasonably conclude this fleet had read a tax rule it has
         ;; not. `payroll.shakai-hoken`'s docstring makes the same point about
         ;; why the reading does not live in `kotoba.taxlaw`.
-        {:social-insurance
+        {;; 賃金の基礎. Present on EVERY draft verdict, held or not, and it is
+         ;; NOT nested under `:tax` or `:social-insurance` for the reason
+         ;; 社会保険 is not nested under `:tax`: this is arithmetic about what
+         ;; the gross figure summed, and a reader who found it inside a key
+         ;; named for a statute would conclude a statute had been read.
+         ;;
+         ;; The `:reads-timesheets? false` case is why this is here at all. A
+         ;; monthly run is not held for ignoring its timesheets — that is
+         ;; normal for a salaried employee — but `the hours were read and
+         ;; agreed` and `the hours were never read` must not print the same,
+         ;; and until now they did.
+         :wage-basis
+         (cond
+           (nil? contract-record)
+           {:chingin/answer :no-registered-contract
+            :chingin/certifiable? false
+            :chingin/why (str "賃金の基礎は登録された契約に書かれる事実なので、"
+                              "契約が無ければ問いを立てられない。"
+                              "この run は契約が無いこと自体で既に hold されている")}
+
+           (not (:labor/valid? draft-validation))
+           {:chingin/answer :invalid-contract
+            :chingin/certifiable? false
+            :chingin/why (str "契約が kotoba.labor/validate-contract を通らない（"
+                              (pr-str (:labor/error draft-validation))
+                              "）。不正な契約から出た賃金の基礎は評価しない")}
+
+           :else
+           (chingin/assess
+            {:contract contract-record
+             :timesheets (store/timesheets-of
+                          store (:contract/worker contract-record))}))
+
+         :social-insurance
          (cond
            ;; Present on EVERY draft verdict, held or not, and saying
            ;; `:jurisdiction-not-declared` where the employer declared none —

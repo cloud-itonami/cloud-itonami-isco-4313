@@ -49,7 +49,27 @@
         ;; (6 coordinates, 0 `:local/root`).
         io.github.kotoba-lang/langchain-store
         {:git/url "https://github.com/kotoba-lang/langchain-store.git"
-         :git/sha "b986669f72276568c97e1fa5b331a5ff3017bf69"}}
+         :git/sha "b986669f72276568c97e1fa5b331a5ff3017bf69"}
+
+        ;; the workspace's BASE design system — デジタル庁デザインシステム
+        ;; (CLAUDE.md, owner decision 2026-08-05: new UI is built on jp-go-dds,
+        ;; not on liquid-glass). The operator console is Japanese and is read by
+        ;; somebody doing payroll for a real company; a bespoke stylesheet here
+        ;; would be a second design language nobody else on this fleet reads.
+        ;;
+        ;; It is required by `payroll.ui.render` ONLY. Every other UI namespace
+        ;; is hiccup-in / hiccup-out and has no dependency on it, so the views,
+        ;; the accessibility invariants and the printable artifacts are all
+        ;; testable without a design system — which is what keeps this pin from
+        ;; becoming load-bearing for anything except the document shell.
+        ;;
+        ;; Its transitive tree (html, css, kotoba-kir, security) was checked for
+        ;; `:local/root` by PARSING each deps.edn as EDN at the resolved pins,
+        ;; the check the header above insists on rather than a grep. Measured
+        ;; 2026-08-25: 22 coordinates across the 5 files, 0 `:local/root`.
+        io.github.kotoba-lang/jp-go-digital-design-system
+        {:git/url "https://github.com/kotoba-lang/jp-go-digital-design-system.git"
+         :git/sha "0a0218052b0d563057341a1c2ab310045052bd23"}}
 
  ;; --------------------------------------------------------------------------
  ;; ZERO `:local/root`, and that is a hard property rather than a preference.

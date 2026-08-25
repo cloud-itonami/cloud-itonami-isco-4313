@@ -91,9 +91,10 @@
                                      (:escalate? verdict) :request-approval
                                      :else :commit)}))
       (g/add-node :escalate
-                   (fn [{:keys [request verdict]}]
+                   (fn [{:keys [request proposal verdict]}]
                      (store/append-ledger!
                       store (identify request {:disposition :request-approval
+                                               :proposal proposal
                                                :verdict verdict}))
                      {:audit [{:node :escalate :verdict verdict}]}))
       (g/add-node :request-approval (fn [s] s))
@@ -116,9 +117,25 @@
                        {:record record
                         :audit [{:node :commit :record record}]})))
       (g/add-node :hold
-                   (fn [{:keys [request verdict]}]
+                   (fn [{:keys [request proposal verdict]}]
+                     ;; the PROPOSAL is on the hold entry, and it was not
+                     ;; before 2026-08-25. A committed run keeps its figures
+                     ;; in `:record`; a held one kept none, so the only
+                     ;; durable record of a refused run said WHY it was
+                     ;; refused and not WHAT was refused. `why was this run
+                     ;; not paid` — the question this ledger exists to answer
+                     ;; — cannot be answered by a verdict alone when the
+                     ;; violation is about an amount, and an operator
+                     ;; reopening a held month had to reconstruct the figures
+                     ;; from a form they had already navigated away from.
+                     ;;
+                     ;; It is `:proposal` and NOT `:record`, so nothing that
+                     ;; counts committed records counts a held one — the same
+                     ;; separation `payroll.handoff` keeps by stamping
+                     ;; `:disposition :handoff`.
                      (store/append-ledger!
                       store (identify request {:disposition :hold
+                                               :proposal proposal
                                                :verdict verdict}))
                      {:audit [{:node :hold :verdict verdict}]}))
       (g/set-entry-point :intake)

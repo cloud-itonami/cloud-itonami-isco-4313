@@ -16,9 +16,17 @@
   no platform types — a response is a map `{:status n :body {...}}` and the
   caller's DID arrives already verified. CACAO verification is
   `kotoba-lang/org-chainagnostic-cacao`'s job and is not reimplemented here
-  (ADR-2607268000); mounting these functions on Cloudflare Pages Functions is a
-  host binding this repo does not yet carry, and inventing an untested one
-  would be worse than saying so.
+  (ADR-2607268000).
+
+  **These functions are mounted.** `payroll.host.jvm` binds them to a socket
+  over `com.sun.net.httpserver`, and `payroll.host.config` refuses to start a
+  deployment that has not said how a caller is identified — which is what
+  makes `the DID arrives already verified` a property of the deployment rather
+  than a hope. This docstring used to say a host binding was a thing this repo
+  did not yet carry; that stopped being true on 2026-08-25.
+
+  A Cloudflare Pages Functions binding is still absent, and these functions
+  remain portable so that it can be added without touching them.
 
   ## Why one op has a write route, and why the other two have none
 

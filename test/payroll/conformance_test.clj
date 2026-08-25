@@ -48,6 +48,16 @@
     (store/register-client! st {:client-id "emp-atl" :name "Atlantis Co"
                                 :jurisdiction [:atlantis]})
     (store/register-contract! st (labor/contract "c-1" "worker-1" "emp-1" "baker" :hourly 2000))
+    ;; 賃金の基礎 (rule 15): a worker whose registered timesheet carries an
+    ;; overtime hour `kotoba.labor/wages-for` provably does not read. The
+    ;; contract is otherwise identical to c-1, so the case set carries the
+    ;; two sides of rule 15 and nothing else differs between them.
+    (store/register-contract! st (labor/contract "c-ot" "worker-ot" "emp-1" "baker" :hourly 2000))
+    (store/register-timesheet! st (labor/timesheet "worker-ot" "2026-07-01" 8))
+    (store/register-timesheet! st (labor/timesheet "worker-ot" "2026-07-02" 6))
+    (store/register-timesheet!
+     st (assoc (labor/timesheet "worker-ot" "2026-07-03" 0)
+               :ts/overtime-hours 3))
     (store/register-contract! st (labor/contract "c-2" "worker-2" "emp-2" "mechanic" :hourly 2500))
     (store/register-contract!
      st (merge (labor/contract "c-jp" "worker-1" "emp-jp" "baker" :hourly 2000)
@@ -208,7 +218,16 @@
    {:name :ok/year-not-finished
     :request {:client-id "emp-jp" :contract-id "c-jp-nen" :year "2026"
               :final-payment-of-year? false}
-    :proposal nen}])
+    :proposal nen}
+
+   ;; 賃金の基礎 (rule 15). The store below registers an overtime hour against
+   ;; `worker-ot`, so the run whose gross ignores it is HELD — and the run
+   ;; that cites a contract for a worker with no premium fact is not.
+   {:name :hold/wage-basis-unaccounted
+    :request {:client-id "emp-1"}
+    :proposal {:op :draft-payroll-run :effect :propose :contract-id "c-ot"
+               :period "2026-07" :gross 28000 :deductions 0 :net 28000
+               :confidence 0.9 :stake :low}}])
 
 (defn- verdict-for [{:keys [request proposal]}]
   (governor/check request {} proposal (fresh-store)))
@@ -230,12 +249,48 @@
       (is (not (:ok? v)))
       (is (seq (:violations v)) "a hold must say what it refused"))))
 
+(deftest every-draft-case-reports-a-wage-basis
+  ;; The same device as `every-non-hold-tax-case-says-what-was-not-checked`,
+  ;; one rule over: an omitted report and a satisfied rule look the same, and
+  ;; a monthly run whose timesheets were never read looks exactly like one
+  ;; where they were.
+  (doseq [{:keys [name proposal] :as c} cases
+          :when (= :draft-payroll-run (:op proposal))]
+    (testing (str name)
+      (let [b (:wage-basis (verdict-for c))]
+        (is (some? b) "a draft verdict with no wage-basis report")
+        (is (contains? b :chingin/answer))
+        (is (contains? b :chingin/certifiable?))
+        (is (seq (:chingin/why b)))))))
+
+(deftest every-wage-basis-refusal-is-held
+  ;; answerable ⇔ not held, pinned in both directions — the equivalence
+  ;; `every-year-end-answer-is-either-answered-or-held` pins for 年末調整.
+  (doseq [{:keys [name proposal] :as c} cases
+          :when (= :draft-payroll-run (:op proposal))
+          :let [v (verdict-for c)
+                b (:wage-basis v)]
+          ;; only where the basis was actually evaluated — a run with no
+          ;; registered contract is held for its own reason and the basis
+          ;; report says `:no-registered-contract`
+          :when (contains? #{:accounted-for :premium-not-priced :unknown-wage-type}
+                           (:chingin/answer b))]
+    (testing (str name)
+      (if (:chingin/certifiable? b)
+        (is (not-any? #(= :wage-basis-unaccounted (:rule %)) (:violations v)))
+        (is (and (:hard? v)
+                 (some #(contains? #{:wage-basis-unaccounted
+                                     :wage-basis-uncomputable}
+                                   (:rule %))
+                       (:violations v)))
+            "an uncertifiable wage basis that did not hold the run")))))
+
 (deftest the-case-set-actually-covers-the-three-dispositions
   ;; evidence floor: a conformance suite whose cases all landed in one
   ;; disposition would pass while checking almost nothing.
   (let [vs (map verdict-for cases)]
     (is (>= (count (filter :ok? vs)) 5) "no clean case")
-    (is (>= (count (filter :hard? vs)) 16) "HARD rules under-covered")
+    (is (>= (count (filter :hard? vs)) 17) "HARD rules under-covered")
     (is (>= (count (filter :escalate? vs)) 3) "escalation under-covered")))
 
 (deftest every-non-hold-tax-case-says-what-was-not-checked

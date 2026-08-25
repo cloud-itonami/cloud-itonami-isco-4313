@@ -3,6 +3,7 @@
             [clojure.test :refer [deftest is testing]]
             [clojure.string]
             [kotoba.labor :as labor]
+            [payroll.chingin :as chingin]
             [payroll.nenmatsu :as nenmatsu]
             [payroll.shakai-hoken :as hoken]
             [payroll.store :as store]
@@ -785,3 +786,131 @@
                                            :shakai-hoken/schemes])
                           :when (get-in r [:scheme/amount :amount/computable?])]
                       k))))))))
+
+;; ---------------------------------------------------------------------------
+;; Rule 15 — 賃金の基礎 (payroll.chingin)
+;;
+;; What rule 4 does not check. Rule 4 is about AGREEMENT between the advisor
+;; and `kotoba.labor/wages-for`; both compute the figure the same way, so it
+;; cannot notice that the way ignores registered facts.
+;; ---------------------------------------------------------------------------
+
+(deftest every-chingin-refusal-has-a-hard-rule
+  (testing "driven off the refusal set rather than a cond, so a refusal that
+            namespace adds and this governor has not classified is caught
+            here instead of committing"
+    (doseq [r chingin/refusals]
+      (is (contains? governor/chingin-refusal-rules r)
+          (str "unclassified refusal: " r)))
+    (testing "and no answer is classified as both"
+      (is (empty? (filter chingin/answers
+                          (keys governor/chingin-refusal-rules)))))))
+
+(deftest a-registered-overtime-hour-holds-the-run
+  (testing "the honest run is held, and the hold names the article nobody
+            has read rather than pricing the hour"
+    (let [st (fresh-store)]
+      (store/register-timesheet!
+       st (assoc (labor/timesheet "worker-1" "2026-07-03" 0)
+                 :ts/overtime-hours 4))
+      (let [v (governor/check {:client-id "emp-1"} {} (clean-proposal) st)
+            hit (first (filter #(= :wage-basis-unaccounted (:rule %))
+                               (:violations v)))]
+        (is (:hard? v))
+        (is (some? hit))
+        (is (= :ts/overtime-hours (:chingin/premium hit)))
+        (is (str/includes? (:detail hit) "第三十七条"))
+        (is (str/includes? (:detail hit) "未読"))))))
+
+(deftest a-registered-zero-does-not-hold
+  (testing "an operator who answered `no overtime this month` has answered
+            the question; holding an answered question trains them to stop"
+    (let [st (fresh-store)]
+      (store/register-timesheet!
+       st (assoc (labor/timesheet "worker-1" "2026-07-03" 0)
+                 :ts/overtime-hours 0))
+      (is (:ok? (governor/check {:client-id "emp-1"} {} (clean-proposal) st))))))
+
+(deftest rule-15-does-not-need-a-declared-jurisdiction
+  (testing "ignoring a registered overtime hour is arithmetic, not law — so
+            scoping it to a declared jurisdiction would make declaring
+            nothing the cheapest way to skip it. `fresh-store`'s employer
+            declares none"
+    (let [st (fresh-store)]
+      (is (nil? (:jurisdiction (store/client st "emp-1"))))
+      (store/register-timesheet!
+       st (assoc (labor/timesheet "worker-1" "2026-07-03" 0)
+                 :ts/overtime-hours 4))
+      (is (:hard? (governor/check {:client-id "emp-1"} {} (clean-proposal) st))))))
+
+(deftest rule-15-does-not-fire-without-a-valid-registered-contract
+  (testing "rule 3 already holds such a run, and a further violation about
+            the wage basis of employment that does not exist would bury the
+            one that matters"
+    (doseq [p [(assoc (clean-proposal) :contract-id nil)
+               (assoc (clean-proposal) :contract-id "c-999")]]
+      (let [v (governor/check {:client-id "emp-1"} {} p (fresh-store))]
+        (is (:hard? v))
+        (is (not-any? #(= :wage-basis-unaccounted (:rule %)) (:violations v)))))))
+
+(deftest every-draft-verdict-reports-the-wage-basis
+  (testing "a monthly run whose timesheets are never read is not held — that
+            is normal for a salaried employee — but `the hours were read and
+            agreed` and `the hours were never read` must not print the same"
+    (let [st (store/mem-store)]
+      (store/register-client! st {:client-id "emp-m" :name "月給の会社"})
+      (store/register-contract!
+       st (labor/contract "c-m" "worker-m" "emp-m" "事務" :monthly 280000))
+      (store/register-timesheet! st (labor/timesheet "worker-m" "2026-07-01" 8))
+      (let [v (governor/check {:client-id "emp-m"} {}
+                              {:op :draft-payroll-run :effect :propose
+                               :contract-id "c-m" :period "2026-07"
+                               :gross 280000 :deductions 0 :net 280000
+                               :confidence 0.9 :stake :low}
+                              st)]
+        (is (:ok? v))
+        (is (= :accounted-for (get-in v [:wage-basis :chingin/answer])))
+        (is (false? (get-in v [:wage-basis :chingin/reads-timesheets?])))
+        (is (= 1 (get-in v [:wage-basis :chingin/timesheet-count])))
+        (is (str/includes? (get-in v [:wage-basis :chingin/why])
+                           "勤怠は一切読まれていない"))))))
+
+(deftest an-hourly-verdict-reports-that-the-hours-were-read
+  (let [v (governor/check {:client-id "emp-1"} {} (clean-proposal) (fresh-store))]
+    (is (true? (get-in v [:wage-basis :chingin/reads-timesheets?])))))
+
+(deftest the-wage-basis-is-reported-even-when-there-is-no-contract
+  (testing "an omitted report and a satisfied rule look the same"
+    (let [v (governor/check {:client-id "emp-1"} {}
+                            (assoc (clean-proposal) :contract-id nil)
+                            (fresh-store))]
+      (is (= :no-registered-contract (get-in v [:wage-basis :chingin/answer])))
+      (is (false? (get-in v [:wage-basis :chingin/certifiable?]))))))
+
+(deftest the-wage-basis-is-reported-for-an-invalid-contract
+  (let [st (fresh-store)]
+    (store/register-contract! st {:contract/id "c-bad" :contract/employer "emp-1"
+                                  :contract/worker "worker-1"
+                                  :contract/wage-type :piece-rate})
+    (let [v (governor/check {:client-id "emp-1"} {}
+                            (assoc (clean-proposal) :contract-id "c-bad") st)]
+      (is (:hard? v))
+      (is (= :invalid-contract (get-in v [:wage-basis :chingin/answer]))))))
+
+(deftest the-wage-basis-is-not-nested-under-tax-or-social-insurance
+  (testing "this is arithmetic about what the gross figure summed, and a
+            reader who found it inside a key named for a statute would
+            conclude a statute had been read"
+    (let [v (governor/check {:client-id "emp-1"} {} (clean-proposal) (fresh-store))]
+      (is (contains? v :wage-basis))
+      (is (nil? (get-in v [:tax :wage-basis])))
+      (is (nil? (get-in v [:social-insurance :wage-basis]))))))
+
+(deftest an-assessment-verdict-carries-no-wage-basis
+  (testing "`:assess-year-end-adjustment` asserts no payment of wages, so
+            there is no gross figure to have a basis for"
+    (let [v (governor/check {:client-id "emp-1" :contract-id "c-1" :year "2026"} {}
+                            {:op :assess-year-end-adjustment :effect :propose
+                             :confidence 0.9 :stake :low}
+                            (fresh-store))]
+      (is (nil? (:wage-basis v))))))
