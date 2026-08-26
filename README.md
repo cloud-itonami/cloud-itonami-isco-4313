@@ -827,22 +827,37 @@ Held runs are **rows in the wage ledger**. A ledger of only what committed can
 answer *what was paid* and cannot answer *why was this month not paid*, which
 is the question anybody opens it for.
 
-### 全銀 総合振込 is refused for every input, always
+### 全銀 総合振込 — the JBA layout was read; a bank has not accepted a file yet
 
-There is no argument that makes `payroll.artifact.bank-transfer/zengin` return
-bytes and there is no function that does. The record layout has not been read,
-and a file assembled from memory would be rejected by the bank or — far worse
-— **misread by it**, on the day wages were due.
+`payroll.artifact.zengin/prepare` builds the fixed-width record and the CSV
+variant. The record layout — 業務種別「21：総合振込」 and the
+header/data/trailer/end records, each 120 bytes — is transcribed from the
+全国銀行協会 (JBA)'s own protocol document, section 8, not from a vendor's
+restatement of it: `jba_protocol_pc.pdf`, PDF pp.38-39 / printed pp.34-35,
+SHA-256 `7f6dcca8d291ab7f72dcf7cc56af7efe717246e8c42cebb8789e399287a058bd`.
+PayPay Bank's own published specification is a vendor extension on top of
+that layout — the CSV variant, the permitted character set and this bank's
+upload-time behaviour — and narrows a few of the JBA's variable fields to
+the one value this bank's WEB総振 screen accepts.
 
-The refusal is not a dead end: it lists what an operator would still have to
-register per contract, and what would remain missing after they had (the
-layout, the 委託者コード, the numeric 預金種目 codes).
+`payroll.artifact.bank-transfer/zengin` is now a compatibility entry point
+rather than the file generator: it takes no employer, period or transfer
+date, so it cannot build the real file, and it stays a per-contract
+registration inventory for the operations console and the exports screen
+while an operator is still registering account numbers.
+
+**What is still not established: that a bank accepted a file this code
+produced.** No test transfer has been made (`docs/maturity.md`'s G4), and the
+CRLF record terminator is an operational 全銀 convention rather than
+something either the JBA pages or PayPay's guide states.
 
 What **is** checked is that a registered 受取人名 is halfwidth — a fact about
-Unicode, decidable without the banking spec — and the artifact carries what
-that check **does not** establish. **Nothing is transliterated**: the reading
-of a Japanese surname is not derivable from its characters, and a name that
-does not match the account is a payment that bounces.
+Unicode, decidable without the banking spec — and, on top of that, whether it
+survives the JBA-layout namespace's fuller permitted-character rule (小文字の
+カナ・長音・中黒 are refused, not merely non-halfwidth characters). **Nothing
+is transliterated**: the reading of a Japanese surname is not derivable from
+its characters, and a name that does not match the account is a payment that
+bounces.
 
 ## MoneyForward — a boundary that has never seen the real thing
 

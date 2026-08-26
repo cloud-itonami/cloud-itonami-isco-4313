@@ -726,6 +726,18 @@
     (is (str/includes? j "paypay-bank.co.jp"))
     (is (str/includes? j "テスト振込は行われていない"))))
 
+(deftest the-jba-source-provenance-matches-what-was-actually-read
+  (testing "the URL, hash and byte size of the two pages read, and that
+            業務種別「21：総合振込」 survives into the rendered header"
+    (is (= "https://www.zenginkyo.or.jp/fileadmin/res/abstract/efforts/system/jba_protocol_pc.pdf"
+           (:source/url zengin/jba-source)))
+    (is (= "7f6dcca8d291ab7f72dcf7cc56af7efe717246e8c42cebb8789e399287a058bd"
+           (:read/sha256 (first (:source/read zengin/jba-source)))))
+    (is (= 5421458 (:read/bytes (first (:source/read zengin/jba-source)))))
+    (let [header (first (remove str/blank?
+                                (str/split (zengin/->fixed-width (prepared)) #"\r\n")))]
+      (is (= "21" (subs header 1 3))))))
+
 ;; ---------------------------------------------------------------------------
 ;; 住民税・割増賃金・料率 — arithmetic, and the refusals around it
 ;; ---------------------------------------------------------------------------

@@ -49,7 +49,7 @@ The `deployed` column exists so that fact has somewhere to be written down.
 | MoneyForward import + reconciliation | ✅ | ✅ | ✅ | ❌ | ❌ |
 | **Content addressing (SHA-256 / raw CIDv1)** | ✅ | ✅ | ✅ | ❌ | ❌ |
 | **Durable store (`payroll.store.kotobase`)** | ✅ | ✅ | ✅ | ❌ | ❌ |
-| **全銀 総合振込 fixed-width + CSV (PayPay Bank)** | ✅ | ✅ | ✅ | ❌ | ❌ |
+| **全銀 総合振込 fixed-width (JBA) + CSV (PayPay Bank)** | ✅ | ✅ | ✅ | ❌ | ❌ |
 | **住民税 特別徴収 (notice-driven)** | ✅ | ✅ | ✅ | ❌ | ❌ |
 | **割増賃金 arithmetic (労基法 第三十七条)** | ✅ | ✅ | ✅ | ❌ | ❌ |
 | **健康保険・介護保険・厚生年金・雇用保険 rates** | ✅ | ✅ | ✅ | ❌ | ❌ |
@@ -81,10 +81,17 @@ under rows that were already `implemented ✅`, and it moves no column:
   repository ships no transport that reaches a network, so a deployment must
   inject one, and `payroll.host.jvm/start!` refuses `PAYROLL_STORE=kotobase`
   without it.
-- **全銀 総合振込.** The layout was read from PayPay Bank's published
-  specification (`data.pdf`, revised 2025-03-06) and transcribed field by
-  field. Every record encodes to exactly 120 bytes in Shift_JIS, measured by
-  encoding rather than asserted.
+- **全銀 総合振込.** The record layout — 業務種別「21：総合振込」 and the
+  header/data/trailer/end records — was read from the 全国銀行協会 (JBA)'s
+  own protocol document (`jba_protocol_pc.pdf`, 8. 総合振込レコード・
+  フォーマット, PDF pp.38-39 / printed pp.34-35, SHA-256 `7f6dcca8…`) and
+  transcribed field by field. PayPay Bank's own published specification
+  (`data.pdf`, revised 2025-03-06) is a vendor extension on top of that
+  layout, not a second reading of it: it supplies the CSV variant, the
+  permitted character set and this bank's own upload-time behaviour, and it
+  narrows a few of the JBA's variable fields to the one value this bank's
+  WEB総振 screen accepts. Every record encodes to exactly 120 bytes in
+  Shift_JIS, measured by encoding rather than asserted.
 - **住民税 特別徴収.** Read from the 東京都・都内区市町村 手引き (令和８年１月).
   It is notice-driven: the municipality decides the amount and this actor
   registers twelve monthly figures and refuses everything else.
@@ -293,8 +300,9 @@ in `:table/not-transcribed` rather than approximated from the 月額表.
 
 ### G4. A bank file the bank accepts — HALF DONE
 
-The layout is read and the bytes are produced. **No test transfer has been
-made**, which is the other half and is not this repository's to do.
+The layout is read — from the JBA's own protocol document, section 8, not a
+vendor's restatement of it — and the bytes are produced. **No test transfer
+has been made**, which is the other half and is not this repository's to do.
 
 ### G5. 住民税 — REGISTERED, KEPT AND REPORTED; COMPUTED BY NOBODY HERE
 

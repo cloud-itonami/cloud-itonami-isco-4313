@@ -388,12 +388,18 @@
 ;; ---------------------------------------------------------------------------
 
 (def zengin-source
-  "Read straight off `payroll.artifact.zengin` rather than restated here.
+  "PayPay's vendor extension (CSV, permitted characters, upload behaviour),
+  read straight off `payroll.artifact.zengin` rather than restated here.
 
   A screen with its own copy of a document's revision date is the copy that
   drifts — `payroll.ui.views-test` asserts the rendered page carries the
   namespace's value and not a literal."
   zengin/source)
+
+(def zengin-jba-source
+  "The JBA's own record layout — 全銀協 section 8, 業務種別 21 — read the same
+  way: off `payroll.artifact.zengin/jba-source`, not restated here."
+  zengin/jba-source)
 
 (def zengin-record-length zengin/record-length)
 (def zengin-csv-discrepancy zengin/csv-sample-discrepancy)
@@ -467,10 +473,11 @@
    {:artifact/key :bank-transfer :artifact/label "振込データ（独自列）"
     :artifact/formats [:csv :json] :artifact/statutory? false
     :artifact/why "この repository 独自の列。どの銀行の様式でもない"}
-   {:artifact/key :zengin :artifact/label "全銀 総合振込（PayPay銀行）"
+   {:artifact/key :zengin :artifact/label "全銀 総合振込（JBA レイアウト・PayPay銀行 CSV）"
     :artifact/formats [:fixed-width :csv :json] :artifact/statutory? false
-    :artifact/why (str "PayPay銀行の項目説明（2025-03-06改定）から転記した"
-                       "固定長120バイト（Shift_JIS・CRLF）と CSV。"
+    :artifact/why (str "全銀協の仕様書（8. 総合振込レコード・フォーマット）から"
+                       "転記した固定長120バイト（Shift_JIS・CRLF）と、"
+                       "PayPay銀行の項目説明（2025-03-06改定）から転記した CSV。"
                        "銀行がこのファイルを受理したことは確かめていない —— "
                        "テスト振込は行われていない")}
    {:artifact/key :journal :artifact/label "仕訳（会計への引渡し）"
@@ -543,21 +550,26 @@
    [:section {:class "dds-ext-card zengin"}
     [:h2 "全銀 総合振込 — 出力できる。ただし銀行に通したことは無い"]
     [:p {:class "state-unverified" :aria-label "銀行での受理は未検証"}
-     (str "PayPay銀行の項目説明（" (:source/revised zengin-source)
-          " 改定）から転記した固定長 " zengin-record-length
-          " バイト（Shift_JIS・CRLF）と、その CSV 版を出力する。"
-          (:source/what-it-does-not-establish zengin-source))]
+     (str "固定長 " zengin-record-length
+          " バイト（Shift_JIS・CRLF）は全銀協の仕様書「8. 総合振込レコード・"
+          "フォーマット」（業務種別21）から転記し、その CSV 版は PayPay銀行の"
+          "項目説明（" (:source/revised zengin-source)
+          " 改定）から転記して出力する。"
+          (:source/what-it-does-not-establish zengin-jba-source))]
     [:table
      [:caption "この様式について確かめたことと、確かめていないこと"]
      [:thead [:tr [:th {:scope "col"} "事項"] [:th {:scope "col"} "状態"]
               [:th {:scope "col"} "根拠"]]]
      [:tbody
+      [:tr [:th {:scope "row"} "レコード・レイアウト（項番・桁数）"]
+       [:td [:span {:class "state-verified" :aria-label "転記済み"} "転記済み"]]
+       [:td "全銀協の仕様書、8. 総合振込レコード・フォーマットから項番順に転記した"]]
       [:tr [:th {:scope "row"} "レコード長"]
        [:td [:span {:class "state-verified" :aria-label "転記済み"} "転記済み"]]
        [:td (str "1レコード " zengin-record-length
                  " バイト。許容文字はすべて Shift_JIS で1バイトなので"
                  "文字数と一致する")]]
-      [:tr [:th {:scope "row"} "使用許容文字"]
+      [:tr [:th {:scope "row"} "使用許容文字（PayPay銀行）"]
        [:td [:span {:class "state-verified" :aria-label "転記済み"} "転記済み"]]
        [:td (str "小文字カナ・長音・中黒は使えない。"
                  "この actor は置き換えず、拒否して仕様の文言を示す —— "

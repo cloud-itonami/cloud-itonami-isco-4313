@@ -1,12 +1,35 @@
 (ns payroll.artifact.zengin
-  "全銀 総合振込 — the fixed-width record and the CSV variant PayPay Bank
-  accepts.
+  "全銀 総合振込 — the JBA's fixed-width record, and the CSV variant PayPay
+  Bank accepts.
 
   ## The layout was READ, and here is exactly what was read
 
-  `payroll.artifact.bank-transfer/zengin` refused for every input on the
-  stated grounds that *the record layout has not been read*. It has now been
-  read, from the bank's own published specification:
+  Building this file was refused for every input until this was read. The
+  RECORD LAYOUT — 業務種別「21：総合振込」, and the header/data/trailer/end
+  records that make up a 120-桁 file — is the 全国銀行協会 (JBA)'s own, not a
+  vendor's restatement of it:
+
+    全銀協パーソナル・コンピュータ用標準通信プロトコル（ベーシック手順）
+    適用業務およびレコード・フォーマット、8. 総合振込レコード・フォーマット
+    （PDF 38-39ページ、印刷34-35ページ）
+    一般社団法人全国銀行協会、令和元年12月
+    https://www.zenginkyo.or.jp/fileadmin/res/abstract/efforts/system/jba_protocol_pc.pdf
+    SHA-256 7f6dcca8d291ab7f72dcf7cc56af7efe717246e8c42cebb8789e399287a058bd
+    (5,421,458 bytes)
+
+  Every field name, width, kind, justification, pad character and fixed
+  value in `layout` below that is not marked as PayPay's own restriction is
+  transcribed from those two pages, item table by item table — see
+  `jba-source` for exactly what was read and what of that 189-page document
+  was not.
+
+  On top of that layout, PayPay Bank's own published specification is a
+  VENDOR EXTENSION, not a second copy of the same authority. It supplies
+  three things the JBA pages above do not: the CSV variant, the permitted
+  character set, and this bank's own upload-time behaviour. And it NARROWS
+  several of the JBA's fields — 振込元銀行コード, 振込元預金種目, 新規コード
+  and others `layout` marks `:f/fixed` — to the one value this bank's WEB総振
+  screen accepts, where the JBA leaves them variable:
 
     PayPay銀行「WEB総振（総合振込）振込データの項目説明」 2025年3月6日改定
     https://www.paypay-bank.co.jp/business/payment/transfer-all/guide/data.pdf
@@ -16,16 +39,19 @@
     PayPay銀行 ビジネスアカウントプラス／WEB総振 ご利用ガイド
     https://www.paypay-bank.co.jp/business/payment/transfer-all/guide/ba-plus.pdf
 
-  Every field name, width, fixed value, justification and pad character in
-  `layout` below is transcribed from the first of those, item table by item
-  table. The character set in `permitted-characters` is its 使用許容文字 page.
+  See `source` for that reading, and `jba-source` for the JBA one.
 
   **What is still NOT established by any of this: that a bank accepted a file
   this code produced.** No test transfer has been made. `docs/maturity.md`'s
   G4 asks for exactly that and it is still open; what closed is the half of
   G4 that was this repository's, which was reading the layout.
 
-  ## Three things the specification says that a from-memory version gets wrong
+  ## Three things PayPay's specification says that a from-memory version gets wrong
+
+  These three are PayPay's vendor extension, not the JBA pages — the JBA
+  layout above does not define a CSV variant, does not spell out a permitted
+  character set on the two pages read here, and says nothing about what an
+  upload screen does with a zero-yen line.
 
   1. **The CSV trailer is not the fixed-width trailer.** 合計件数 is **6**
      digits in the fixed-width record and **4** in the CSV, and the CSV
@@ -43,8 +69,8 @@
      specification gives the substitutions rather than leaving them to be
      guessed — so this namespace REFUSES and quotes the rule, and does not
      substitute. Turning ｼﾝｼﾞｭｸ into ｼﾝｼﾞﾕｸ is a decision about somebody's
-     account name, and `payroll.artifact.bank-transfer` already records why
-     this actor does not make those.
+     account name, and `payroll.artifact.payee` already records why this
+     actor does not make those.
 
   ## Bytes
 
@@ -55,10 +81,11 @@
   namespace itself stays `.cljc` and produces characters; encoding is a host
   effect and belongs where `payroll.host.jvm` puts the other ones.
 
-  The record terminator is CRLF. **The specification text extracted from the
-  PDF does not state a terminator** — its only mention of line breaks says
-  the printed sample wraps and the real data does not — so CRLF here is the
-  全銀 convention for an uploaded text file and is one of the things a test
+  The record terminator is CRLF. **Neither source states a terminator** — the
+  two JBA pages `jba-source` reads say nothing about line breaks at all, and
+  PayPay's own guide only mentions that its printed sample wraps and the real
+  data does not — so CRLF here is the 全銀 convention for an uploaded text
+  file, transcribed from neither PDF, and is one of the things a test
   transfer would settle. It is `line-terminator` rather than a literal for
   that reason.
 
@@ -68,11 +95,63 @@
   paid, and is reachable only for runs `payroll.meisai/payable?` already
   admits. Nothing here writes to a store."
   (:require [clojure.string :as str]
-            [payroll.artifact.bank-transfer :as bank]
+            [payroll.artifact.payee :as payee]
             [payroll.artifact.text :as text]
             [payroll.meisai :as meisai]))
 
+(def jba-source
+  "The 全国銀行協会 (JBA) own record layout — the authority `layout` below
+  transcribes for 業務種別「21：総合振込」 and the header/data/trailer/end
+  records, from the two pages of a 189-page protocol document that were
+  actually read.
+
+  `:source/read` names exactly that reading; `:source/not-read` names the
+  rest of the same document, because a 189-page PDF is not 'read' on the
+  strength of two pages of it, and this repository does not claim the other
+  187."
+  {:source/title
+   (str "全銀協パーソナル・コンピュータ用標準通信プロトコル（ベーシック手順）"
+        "　適用業務およびレコード・フォーマット")
+   :source/authority "一般社団法人全国銀行協会"
+   :source/edition "令和元年12月"
+   :source/url "https://www.zenginkyo.or.jp/fileadmin/res/abstract/efforts/system/jba_protocol_pc.pdf"
+   :source/read-at "2026-08-26"
+   :source/read
+   [{:read/what "8. 総合振込レコード・フォーマット（PDF 38-39ページ、印刷34-35ページ）"
+     :read/url "https://www.zenginkyo.or.jp/fileadmin/res/abstract/efforts/system/jba_protocol_pc.pdf"
+     :read/sha256 "7f6dcca8d291ab7f72dcf7cc56af7efe717246e8c42cebb8789e399287a058bd"
+     :read/bytes 5421458
+     :read/at "2026-08-26"
+     :read/note
+     (str "業務種別「21：総合振込」と、ヘッダー・データ・トレーラー・エンドの"
+          "4レコード（各120桁）を項番・項目名・桁数・内容の表から転記した。"
+          "`layout` の :f/width と :f/kind はここが出所であり、"
+          "PayPay銀行の項目説明を出所とするのは :f/fixed の一部（この銀行の"
+          "画面が値を1つに絞っているもの）と、この JBA の2ページには無い"
+          "CSV・使用許容文字・アップロード時の挙動だけである")}]
+   :source/not-read
+   ["総合振込以外の業務種別（給与振込・預金口座振替 等）のレコード・フォーマット"
+    (str "振込依頼人名・受取人名などの記入方法を示す付録2（本文が"
+         "「編注：付録2.参照」と指す使用可能文字の一覧 —— "
+         "permitted-characters の出所ではない）")
+    "この PDF のその他すべての章・別冊"]
+   :source/what-it-does-not-establish
+   (str "この repository が出力したファイルを銀行が受理したこと。"
+        "テスト振込は行われていない（docs/maturity.md の G4）。"
+        "レコード終端子（CRLF）は、ここで読んだ2ページの本文には明記されて"
+        "いない —— `line-terminator` のとおり、アップロードする文字ファイル"
+        "としての全銀の慣行であり、転記ではない")})
+
 (def source
+  "PayPay銀行の項目説明 — `jba-source` が定めるレコード・レイアウトの上に、
+  この銀行だけの拡張として乗る。CSV 変種、使用許容文字、禁則文字の置換案内、
+  アップロード時の挙動（0円行の扱い・30文字超の拒否）はここにしかなく、
+  `jba-source` の2ページは定めていない。
+
+  それとは別に、JBA のレイアウトが変数として残す項目のうち、振込元銀行コード
+  や振込元預金種目のようにこの銀行のWEB総振画面が値を1つに固定しているものが
+  あり、`layout` の該当フィールドの `:f/fixed` とその note がどちらの理由で
+  固定されているかを記す。"
   {:source/title "PayPay銀行 WEB総振（総合振込）振込データの項目説明"
    :source/authority "PayPay銀行"
    :source/revised "2025-03-06"
@@ -145,7 +224,7 @@
    {:forbidden/char \ー :forbidden/name "長音"
     :forbidden/use-instead "-" :forbidden/quote "長音「ー」は使用できません"}
    ;; U+FF70, the HALFWIDTH prolonged sound mark. It is inside the halfwidth
-   ;; block, so `payroll.artifact.bank-transfer/halfwidth?` accepts it and a
+   ;; block, so `payroll.artifact.payee/halfwidth?` accepts it and a
    ;; name carrying it reaches this layer looking fine — which is exactly why
    ;; it is listed separately from the fullwidth one above rather than being
    ;; left to the generic refusal.
@@ -192,7 +271,12 @@
     :f/source     which key of the request the value comes from
     :f/required?  whether a blank value is an error the bank will raise
 
-  A vector of vectors and not a map: the ORDER is the record."
+  `:f/width` and `:f/kind` are `jba-source`'s — the JBA's own item tables for
+  業務種別 21. `:f/fixed` is sometimes the JBA's own 固定値 (データ区分, 種別
+  コード) and sometimes PayPay's own narrowing of a JBA field the bank leaves
+  variable (振込元銀行コード, 振込元預金種目, 新規コード) — see `source` for
+  which fields those are and why. A vector of vectors and not a map: the
+  ORDER is the record."
   {:header
    {:record/label "ヘッダーレコード"
     :record/length record-length
@@ -305,7 +389,7 @@
 
 (def account-type-codes
   "預金種目（1：普通、2：当座、4：貯蓄）, mapped from the vocabulary
-  `payroll.artifact.bank-transfer/payee-fields` already admits.
+  `payroll.artifact.payee/payee-fields` already admits.
 
   貯蓄 has no keyword here because `payee-fields` does not admit one, and
   inventing the keyword would mean inventing a registration an operator never
@@ -504,7 +588,7 @@
 ;; ---------------------------------------------------------------------------
 
 (defn payee-values
-  "One `payroll.artifact.bank-transfer/payee` line as this layout's values."
+  "One `payroll.artifact.payee/payee` line as this layout's values."
   [line]
   {:payee/bank-code (:bank-code line)
    :payee/bank-name-kana (:bank-name-kana line)
@@ -528,17 +612,17 @@
 
     {:zengin/status  :ok | :refused
      :zengin/records {:header … :data […] :trailer … :end …}   rendered text
-     :zengin/refused [payee refusals, verbatim from bank-transfer]
+     :zengin/refused [payee refusals, verbatim from payroll.artifact.payee]
      :zengin/zero-amount [contract ids whose 振込金額 is 0]
      :zengin/total-count / :zengin/total-amount}
 
   `:zengin/status :refused` when ANY run cannot be rendered. A partial 総合振込
-  file is the failure mode `payroll.artifact.bank-transfer/prepare` names: it
-  pays three of four employees, and the fourth finds out."
+  file is the failure mode `payroll.artifact.payee/prepare` names: it pays
+  three of four employees, and the fourth finds out."
   [{:keys [employer period runs transfer-date-mmdd]}]
   (let [date (or transfer-date-mmdd (get employer transfer-date-key))
-        base (bank/prepare {:employer employer :period period :runs runs})
-        ;; the account-type KEYWORD, which `bank/prepare` renders as a label —
+        base (payee/prepare {:employer employer :period period :runs runs})
+        ;; the account-type KEYWORD, which `payee/prepare` renders as a label —
         ;; this layout needs the code, and mapping back from 「普通」 would be
         ;; the round trip through a display string that loses 貯蓄.
         lines (mapv (fn [{:keys [contract meisai]}]
@@ -579,6 +663,7 @@
      :zengin/period period
      :zengin/transfer-date date
      :zengin/source source
+     :zengin/jba-source jba-source
      :zengin/records {:header header :data data :trailer trailer :end end}
      :zengin/origin origin
      :zengin/lines payable
@@ -869,7 +954,8 @@
         "この repository はアップロードしていない")})
 
 (defn ->json
-  "The machine-readable companion. Carries the source, the totals, the zero
+  "The machine-readable companion. Carries both sources — `jba-source` for
+  the layout, `source` for PayPay's extension of it — the totals, the zero
   lines, the refusals and what is still unestablished — never an account
   number and never a payee name.
 
@@ -890,12 +976,22 @@
     [:record_length 120]
     [:encoding "Shift_JIS"]
     [:line_terminator "CRLF"]
-    [:source (text/json-object-of
-              [[:title (:source/title source)]
-               [:url (:source/url source)]
-               [:revised (:source/revised source)]
-               [:read_at (:source/read-at source)]
-               [:does_not_establish (:source/what-it-does-not-establish source)]])]
+    [:jba_source (text/json-object-of
+                  [[:title (:source/title jba-source)]
+                   [:authority (:source/authority jba-source)]
+                   [:url (:source/url jba-source)]
+                   [:sha256 (:read/sha256 (first (:source/read jba-source)))]
+                   [:bytes (:read/bytes (first (:source/read jba-source)))]
+                   [:read_at (:source/read-at jba-source)]
+                   [:establishes (:read/note (first (:source/read jba-source)))]
+                   [:does_not_establish
+                    (:source/what-it-does-not-establish jba-source)]])]
+    [:vendor_source (text/json-object-of
+                      [[:title (:source/title source)]
+                       [:url (:source/url source)]
+                       [:revised (:source/revised source)]
+                       [:read_at (:source/read-at source)]
+                       [:does_not_establish (:source/what-it-does-not-establish source)]])]
     [:csv_sample_discrepancy
      (text/json-object-of
       [[:what (:discrepancy/what csv-sample-discrepancy)]
