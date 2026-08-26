@@ -180,10 +180,11 @@
 ;; 振込データ
 ;; ---------------------------------------------------------------------------
 
-(deftest zengin-is-refused-for-every-input-always
-  (testing "there is no argument that makes this return bytes. The record
-            layout has not been read, and a file assembled from memory would
-            move somebody's salary"
+(deftest zengin-compat-entry-point-never-returns-bytes
+  (testing "there is no argument that makes this return bytes — it takes no
+            employer, no period and no transfer date, so it cannot build
+            the real file. The real file lives at
+            payroll.artifact.zengin/prepare"
     (doseq [rs [[] [{:contract (f/contract)}]
                 [{:contract (f/contract {:bank/payee-name-kana nil})}]]]
       (let [z (bank/zengin {:runs rs})]
@@ -191,12 +192,23 @@
         (is (nil? (:zengin/bytes z)))
         (is (seq (:zengin/also-needed z)))))))
 
-(deftest the-zengin-refusal-tells-an-operator-what-half-is-theirs
+(deftest the-zengin-inventory-tells-an-operator-what-half-is-theirs
   (testing "an operator told `unsupported` learns nothing"
     (let [z (bank/zengin {:runs [{:contract (f/contract
                                              {:bank/account-number nil})}]})
           per (first (:zengin/per-contract z))]
       (is (= [:bank/account-number] (:zengin/missing per)))
+      (is (= 4 (count (:zengin/registered per)))))))
+
+(deftest the-zengin-inventory-checks-the-real-permitted-character-rule
+  (testing "a name that passes `halfwidth?` can still carry 中黒 or 長音,
+            which payroll.artifact.zengin refuses and halfwidth? alone does
+            not catch"
+    (let [z (bank/zengin {:runs [{:contract (f/contract
+                                             {:bank/payee-name-kana "ﾈﾂﾄ･ｾﾝﾀｰ"})}]})
+          per (first (:zengin/per-contract z))]
+      (is (bank/halfwidth? "ﾈﾂﾄ･ｾﾝﾀｰ"))
+      (is (= [:bank/payee-name-kana] (:zengin/missing per)))
       (is (= 4 (count (:zengin/registered per)))))))
 
 (deftest halfwidth-is-checked-and-never-transliterated
