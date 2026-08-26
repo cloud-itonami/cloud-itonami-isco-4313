@@ -156,7 +156,15 @@ under rows that were already `implemented ✅`, and it moves no column:
 - **Nothing is deployed and nothing is production-verified.** Not one row.
 - **The three real MoneyForward parallel cycles do not exist.** The evidence
   model and the gate do; no cycle has been recorded from a real export.
-- **No live kotobase write and no live R2 write has been made from this code.**
+- **No live kotobase write and no live R2 write has been made from this
+  code.** The R2 half of that sentence needs a date and a distinction as of
+  2026-08-26: an operator did create the namespace and all three tables
+  against the live catalog and did round-trip one synthetic row through each,
+  **by hand through PyIceberg**. `payroll.projection.catalog` was not on that
+  path. Nothing this repository ships has written to or read from a live
+  catalog, and the `deployed` column stays ❌ for exactly that reason. The
+  full record, with its limits attached to it rather than left here, is
+  `payroll.projection.r2/live-verification`.
 
 ### The ⚠️ rows, and what moved on 2026-08-26
 
@@ -244,10 +252,66 @@ that was never this repository's to do: **no test transfer has been made**, so
   いない様式」 is now 「読んでいない、しかも新しい様式」. Everything from 第2章
   onward, including every 様式 and the 納付書, is listed in `:source/not-read`.
 
-- **R2 — the console shows the preflight, which makes no request.** The
-  projection itself has never been built: `:projection-health` is nil in every
-  deployment this repository ships, because no catalog driver is constructed,
-  and the screen renders `未設定` rather than a pass.
+- **R2 — the tables exist in the live catalog, and this repository still
+  cannot see them.** On 2026-08-26 an operator created the `payroll` namespace
+  and all three tables in the `cloud-itonami-datalake` R2 Data Catalog on
+  account `ai-gftd-cloud`, with the column counts and identity partitions
+  `payroll.projection.schema` declares (19 / 14 / 12 columns; `employer_id`
+  and `period`, `employer_id` and `tax_year`). Through the documented
+  PyIceberg REST path they appended one clearly synthetic, non-real row to
+  each table, read it back as exactly one row, deleted it, and read back zero.
+  **No real payroll data was written.**
+
+  The token is stated as dated facts rather than as an adjective, because the
+  adjective was wrong in the direction that lets somebody stop paying
+  attention. It was issued with a **dashboard expiry of 2026-08-28** and did
+  not reach it: on **2026-08-26, after the verification, the operator deleted
+  it in the Cloudflare dashboard** and confirmed the delete, and the API-token
+  list re-read afterwards no longer contains the exact target
+  `cloud-itonami-payroll-r2-provisioning-260826`. The record therefore says
+  `:credential/revoked? true` with `:credential/revoked-on "2026-08-26"` and
+  `:credential/revoked-before-expiry? true`; the issued expiry is kept as
+  issuance metadata, since the deletion is what ended the credential. What is
+  local to the operator's machine: **the value was never saved there**, and
+  the clipboard copy was **cleared after the verification**. The fields are
+  `:verification/token-handling` in `payroll.projection.r2/live-verification`,
+  and the console renders them as
+  `2026-08-26 に Cloudflare の dashboard で削除して失効済み（発行時の期限
+  2026-08-28 より前）`.
+
+  That moves the `implemented`/`tested` claim from *this shape should work* to
+  *this catalog accepts and round-trips this shape*, and it moves nothing
+  else. `integrated` stays ⚠️ and `deployed` / `production-verified` stay ❌,
+  because:
+
+  - **nothing went through this repository.** `payroll.projection.catalog`
+    was not on the path; no write and no read-back has been made through the
+    application adapter
+  - this repository still **constructs no live catalog driver**, so
+    `:projection-health` is nil in every deployment it ships and the console
+    renders `未設定` rather than a pass
+  - the permissions were verified for **one operator's token** — since
+    revoked — and not for any deployment's
+  - **no real MoneyForward cycle exists**, so cutover condition 6 has nothing
+    to read back and this does **not** satisfy the cutover gate
+
+  The **401 is history now, and stays recorded as history.** It was a real
+  measurement: a token with R2 Data Catalog permission and no R2 storage
+  permission passes `create_namespace` and fails `create_table`, which reads
+  as *the token is wrong* when it is *the token is short of one permission*.
+  It was resolved the same day by granting both **Workers R2 Data Catalog
+  Edit** and **Workers R2 Storage Edit**.
+  `payroll.projection.r2/historical-blocker` keeps the diagnosis with
+  `:blocker/resolved? true` beside it, and the console cannot render the one
+  without the other.
+
+  **The preflight got narrower rather than greener.** It reads no token and
+  makes no request, so it never could say whether a build would succeed, and
+  it no longer returns a field that could be read as saying so: there is no
+  `:preflight/ready?`, the two answers are `:configuration-missing` and
+  `:configuration-present`, and `:preflight/verifies-credentials?` is `false`
+  in the map itself so that a screen forwarding the result forwards the
+  caveat with it.
 
 ## Cutover gate — what must be true before MoneyForward is switched off
 

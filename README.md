@@ -963,7 +963,7 @@ must both answer: the **kotobase** store and the **R2** projection.
 |---|---|---|---|
 | **MF 突合** | `payroll.mf.import` / `.reconcile` | the comparison itself — every field of every mapped run, agreeing ones included | never seen a real MoneyForward export; every column name is a conjecture and `:mf/verified?` is `false` on all of them |
 | **kotobase** | `payroll.store.kotobase` | the durable record of each cycle: seven CAS-guarded chains, payload sealed, node readable | ships no transport that reaches a network |
-| **R2** | `payroll.projection.catalog` / `.r2` | the analysis-side copy, appended idempotently by `cycle_id` and read back | `create_table` returns **401** — the token needs R2 *storage* write as well as catalog write |
+| **R2** | `payroll.projection.catalog` / `.r2` | the analysis-side copy, appended idempotently by `cycle_id` and read back | ships no driver that reaches a network — the live tables exist, but nothing has ever been written to them *through this code* |
 
 ### The procedure, in the order an operator performs it
 
@@ -1022,8 +1022,71 @@ map is the caller who wants the gate to pass.
 
 **Zero cycles have been recorded from a real export.** The gate reads `0/3`,
 condition 4 fails because no kotobase transport is configured, and condition
-6 fails on the 401 above. All three are reported as named blockers rather
-than as a single red light, because they are three different people's work.
+6 fails because this repository constructs no catalog driver — so there is
+nothing to read a projection back *from*, and no cycle to read back anyway.
+All three are reported as named blockers rather than as a single red light,
+because they are three different people's work.
+
+### What was verified against the live catalog on 2026-08-26, and what it does not mean
+
+An operator provisioned the projection by hand: on account `ai-gftd-cloud`,
+in the `cloud-itonami-datalake` R2 Data Catalog, the `payroll` namespace and
+all three tables were created with the column counts and identity partitions
+`payroll.projection.schema` declares — `payroll_run_projection` (19 columns,
+partitioned by `employer_id` and `period`),
+`parallel_reconciliation_projection` (14, the same two) and
+`resident_tax_notice_projection` (12, by `employer_id` and `tax_year`).
+Through the documented PyIceberg REST path, one clearly **synthetic, non-real**
+row was appended to each table, read back as exactly one row, deleted, and
+read back as zero. **No real payroll data was written.**
+
+The token is recorded as dated facts rather than as an adjective, in
+`payroll.projection.r2/live-verification` under `:verification/token-handling`.
+It was issued with a **dashboard expiry of 2026-08-28** and never reached it:
+on **2026-08-26, after the verification, it was deleted in the Cloudflare
+dashboard** with the delete explicitly confirmed, and the API-token list read
+back afterwards no longer contains the exact target
+`cloud-itonami-payroll-r2-provisioning-260826`. So `:credential/revoked?` is
+`true`, `:credential/revoked-on` is `"2026-08-26"`, and
+`:credential/revoked-before-expiry?` is `true` — the issued expiry stays in
+the record as **issuance metadata**, because what ended this credential was
+the deletion and not the calendar. The other two facts are local to the
+operator's machine: **its value was never saved there**, and the clipboard
+copy made to paste it was **cleared after the verification**. This sentence
+used to read *short-lived and not persisted*, which invited a reader to
+conclude there was nothing left to revoke; the correction was never a better
+adjective in either direction, it was dates — and a revocation is the one
+credential state a fixed document can hold safely, since a deleted token
+stays deleted.
+
+That establishes one thing: *this catalog accepts and round-trips the shape
+this repository declares.* It is not a deployment and not a production
+verification, and the four limits are recorded in
+`payroll.projection.r2/live-verification` rather than left for a reader to
+reconstruct — **nothing went through this repository** (`payroll.projection.catalog`
+was not on the path, and no write or read-back has ever been made through the
+application adapter), this repository still **constructs no live catalog
+driver** so `:projection-health` is nil in every deployment it ships, the
+permissions were verified for **one operator's token** and not for any
+deployment's, and **no real MoneyForward cycle exists**, so this does not
+satisfy the cutover gate.
+
+The **401 that used to be reported here is resolved and is kept as dated
+history.** A token carrying R2 Data Catalog permission and no R2 storage
+permission passes `create_namespace` and fails `create_table` — which reads
+as *the token is wrong* when it is *the token is short of one permission*.
+Granting both **Workers R2 Data Catalog Edit** and **Workers R2 Storage
+Edit** cleared it the same day. The diagnosis stays in
+`payroll.projection.r2/historical-blocker` with `:blocker/resolved? true`
+beside it, because the next person to issue a catalog-only token will
+reproduce it exactly.
+
+`payroll.projection.r2/preflight` did **not** become greener. It reads no
+token and sends no request, so it never could say whether a build would
+succeed — it now returns no `:preflight/ready?` at all, answers
+`:configuration-missing` or `:configuration-present`, and carries
+`:preflight/verifies-credentials? false` in the map so the caveat travels
+with the result onto every screen that renders it.
 
 ## Two backends, and a contract test that cannot degrade to one
 

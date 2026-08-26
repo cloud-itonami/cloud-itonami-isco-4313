@@ -8,7 +8,10 @@
   network, so the tests have no network and the properties below are
   measured rather than asserted. `payroll.projection.r2` is the ADAPTER
   CONTRACT for Cloudflare's R2 Data Catalog: the configuration it needs, the
-  requests it would make, and the permission that is currently missing.
+  requests it would make, and what an operator measured by hand against the
+  live catalog on 2026-08-26 — which went through PyIceberg and not through
+  this namespace. **No row has ever reached a live catalog through
+  `append!`.**
 
   ## Idempotency is the append's problem and it is solved with an id
 
@@ -36,9 +39,11 @@
                 more 401s and an operator reading a log of four failures
                 instead of one reason.
 
-  That last distinction is the live one: the current blocker on this
-  deployment is a 401 on `create_table`, and a driver that retried it would
-  have turned one legible failure into a rate-limit.
+  That last distinction earned itself: `create_table` did answer 401 against
+  the live catalog on 2026-08-26, from a token carrying catalog permission
+  and no R2 storage permission (`payroll.projection.r2/historical-blocker`,
+  since resolved). A driver that retried it would have turned one legible
+  failure into a rate-limit.
 
   ## Health is a read-back, not a ping
 

@@ -1619,20 +1619,294 @@
                                :rows [{:run_id "r1"}] :snapshot-id "s"})]
       (is (= :ok (:project/status r)))
       (is (= 3 (:project/attempts r)))))
-  (testing "the live blocker is a 401 and this repository does not retry it"
-    (is (= :http-401 (:blocker/create-table r2/observed-blocker)))
-    (is (str/includes? (:blocker/until-then r2/observed-blocker) "再試行しない"))
+  (testing "the 401 that earned this distinction is history, and the rule it
+            earned is not — a permission failure is still not retried"
+    (is (= :http-401 (:blocker/create-table r2/historical-blocker)))
+    (is (str/includes? (:blocker/still-true r2/historical-blocker) "再試行しない"))
     (is (= 3 catalog/max-attempts))))
 
-(deftest the-r2-preflight-is-not-ready-and-names-the-missing-permission
-  (let [p (r2/preflight {"R2_CATALOG_URI" "https://catalog.example"
-                         "R2_WAREHOUSE" "acct_bucket"
-                         "R2_CATALOG_TOKEN" "irrelevant"})]
-    (is (false? (:preflight/ready? p)))
-    (is (= :permission-gap-unresolved (:preflight/reason p)))
-    (is (= [:granted :missing] (mapv :permission/observed r2/required-permissions)))
-    (is (some #(= :http-401 (:request/observed %)) (:preflight/plan p))))
-  (is (= :configuration-missing (:preflight/reason (r2/preflight {})))))
+(def ^:private configured-env
+  {"R2_CATALOG_URI" "https://catalog.example"
+   "R2_WAREHOUSE" "acct_bucket"
+   "R2_CATALOG_TOKEN" "irrelevant"})
+
+(deftest the-r2-preflight-answers-about-configuration-and-never-about-credentials
+  (testing "it reads no token and sends no request, so `ready?` is a question
+            it cannot ask — and the field is ABSENT rather than false, because
+            a false one invites somebody to make it true"
+    (let [p (r2/preflight configured-env)]
+      (is (not (contains? p :preflight/ready?)))
+      (is (= :configuration-present (:preflight/reason p)))
+      (is (true? (:preflight/configuration-complete? p)))
+      (is (false? (:preflight/verifies-credentials? p)))
+      (is (false? (:preflight/makes-request? p)))
+      (testing "and the sentence it hands a reader says the same thing"
+        (is (str/includes? (:preflight/why p) "揃っていることは、作れることではない"))
+        (is (str/includes? (:preflight/why p) "確かめていない")))))
+  (testing "a deployment naming nothing is a different answer, and the
+            distinction is `which variables` and not `it is wrong`"
+    (let [p (r2/preflight {})]
+      (is (= :configuration-missing (:preflight/reason p)))
+      (is (false? (:preflight/configuration-complete? p)))
+      (is (false? (:preflight/verifies-credentials? p)))
+      (is (not (contains? p :preflight/ready?)))
+      (is (= ["R2_CATALOG_URI" "R2_WAREHOUSE" "R2_CATALOG_TOKEN"]
+             (mapv :config/env (:preflight/missing p)))))))
+
+(deftest the-401-is-kept-as-dated-history-and-not-as-a-current-fact
+  (testing "the diagnosis is worth keeping — a catalog-only token reproduces
+            it exactly — but it was resolved on the day it was found, and a
+            namespace still reporting it as current would be reporting a
+            blocker that is not there"
+    (let [b r2/historical-blocker]
+      (is (true? (:blocker/resolved? b)))
+      (is (= r2/verified-on (:blocker/observed-on b) (:blocker/resolved-on b)))
+      (is (str/includes? (:blocker/resolved-how b) "Workers R2 Data Catalog Edit"))
+      (is (str/includes? (:blocker/resolved-how b) "Workers R2 Storage Edit"))
+      (testing "and the resolution says how far it reaches: one operator's
+                token, and nothing about any deployment's"
+        (is (str/includes? (:blocker/scope-of-resolution b) "1 本のトークン"))
+        (is (str/includes? (:blocker/scope-of-resolution b) "確かめることはできない")))
+      (testing "and it does not describe that token as short-lived. It was
+                issued with an expiry two days out and was deleted by hand on
+                the day of the verification — two dates a reader can compare,
+                which is exactly what `短命` collapses into a guess"
+        (doseq [k [:blocker/resolved-how :blocker/scope-of-resolution]]
+          (is (not (str/includes? (k b) "短命")) (pr-str k))
+          (is (not (str/includes? (k b) "数分")) (pr-str k)))))
+    (testing "no current-fact surface calls it a blocker any more"
+      (let [p (r2/preflight configured-env)]
+        (is (nil? (:preflight/blocker p)))
+        (is (= r2/historical-blocker (:preflight/history p)))
+        (is (not-any? #(= :http-401 (:request/observed %)) (:preflight/plan p))))
+      (is (nil? (:r2/observed-blocker (r2/read-config configured-env)))))
+    (testing "and the two permissions are recorded as granted to ONE token on
+              ONE day, not as a property of anything durable"
+      (is (= [:granted-to-one-operator-token :granted-to-one-operator-token]
+             (mapv :permission/observed r2/required-permissions)))
+      (is (every? #(= r2/verified-on (:permission/observed-on %))
+                  r2/required-permissions)))))
+
+(deftest the-request-plans-successes-say-they-did-not-go-through-this-repository
+  (testing "`:succeeded` with nothing beside it would read as `this code has
+            created these tables`, which is the one thing that did not happen"
+    (let [plan (:preflight/plan (r2/preflight configured-env))]
+      (is (= 4 (count plan)) "one namespace + three tables")
+      (doseq [step plan]
+        (is (= :succeeded (:request/observed step)) (pr-str (:request/step step)))
+        (is (= r2/verified-on (:request/observed-on step)))
+        (is (= :manual-pyiceberg-rest (:request/observed-how step)))
+        (is (false? (:request/observed-through-this-repository? step)))))))
+
+(deftest the-live-verification-records-the-shape-that-was-actually-created
+  (testing "the columns and partitions are recorded independently of
+            `payroll.projection.schema` so the two can be compared. A column
+            added here later means the live tables are no longer the tables
+            that were verified, and this fails rather than letting a date go
+            on standing for a shape it never saw"
+    (is (= pschema/namespace-name (:verification/namespace r2/live-verification)))
+    (is (= (mapv :table/name pschema/tables)
+           (mapv :table/name (:verification/tables r2/live-verification))))
+    (doseq [[v t] (map vector (:verification/tables r2/live-verification)
+                       pschema/tables)]
+      (is (= (count (:table/columns t)) (:table/columns v)) (:table/name t))
+      (is (= (:table/partition-by t) (:table/partition-by v)) (:table/name t)))
+    (testing "and the counts are the ones an operator read off the catalog"
+      (is (= [19 14 12]
+             (mapv :table/columns (:verification/tables r2/live-verification)))))))
+
+(deftest the-live-verification-carries-its-own-limits
+  (testing "a verification whose caveats live in a document beside it is one
+            that gets quoted without them. 「作れることが確かめられた」 is the
+            sentence somebody would lift out of here into a status report"
+    (let [v r2/live-verification]
+      (is (= :manual-operator (:verification/by v)))
+      (is (= :pyiceberg-rest (:verification/path v)))
+      (testing "the row was synthetic, and the round trip was 1 → 1 → 0"
+        (is (= :synthetic-not-real (:verification/row-kind v)))
+        (is (= 1 (:verification/rows-appended v)))
+        (is (= 1 (:verification/rows-read-back v)))
+        (is (= 0 (:verification/rows-after-delete v)))
+        (is (false? (:verification/real-payroll-data-written? v))))
+      (testing "and every claim it does NOT make is in the map"
+        (is (false? (:verification/through-this-repository? v)))
+        (is (false? (:verification/deployed? v)))
+        (is (false? (:verification/production-verified? v)))
+        (is (false? (:verification/satisfies-cutover-gate? v))))
+      (is (= 4 (count (:verification/limits v))))
+      (is (every? seq (:verification/limits v)))
+      (testing "and not one key of this record is one `payroll.sensitive`
+                blocks from a log, because a key that `redact` drops is a
+                caveat that disappears from the screen rather than a caveat"
+        (is (empty? (sensitive/log-violations v)))
+        (is (empty? (sensitive/log-violations r2/historical-blocker)))
+        (doseq [p r2/required-permissions]
+          (is (empty? (sensitive/log-violations p)) (pr-str p))))
+      (testing "the limits name the four things by their own words"
+        (let [printed (str/join "。" (:verification/limits v))]
+          (doseq [s ["payroll.projection.catalog" ":projection-health"
+                     "MoneyForward" "トークン"]]
+            (is (str/includes? printed s) s)))))))
+
+(deftest the-token-is-recorded-as-dates-and-not-as-an-adjective
+  (testing "`:short-lived-not-persisted` was one keyword asserting two things
+            that are not true, and `未失効` — its correction — went stale the
+            moment somebody revoked the credential. Dates are what survive
+            both: an issuance date, a revocation date, and the order they came
+            in"
+    (let [t (:verification/token-handling r2/live-verification)]
+      (is (map? t) "an adjective cannot be checked field by field; a map can")
+      (testing "the record names its exact target, because `a token was
+                deleted` is not checkable by an operator holding several"
+        (is (= "cloud-itonami-payroll-r2-provisioning-260826"
+               r2/token-dashboard-name))
+        (is (= r2/token-dashboard-name (:credential/dashboard-name t))))
+      (testing "the issued expiry is an absolute date, kept as ISSUANCE
+                metadata — it is what the dashboard was set to, not what
+                ended this credential"
+        (is (= "2026-08-28" r2/token-expires-on))
+        (is (= r2/token-expires-on (:credential/expires-on t)))
+        (is (= :cloudflare-dashboard (:credential/expiry-source t)))
+        (is (true? (:credential/expiry-is-issuance-metadata? t)))
+        (is (false? (:credential/expiry-reached? t))
+            "the token was deleted first, so nothing waits for this date"))
+      (testing "the revocation is recorded as an act with a date, a method and
+                a check. `revoked? true` alone is a bare boolean nobody can
+                verify; the deletion is what makes every other sentence here a
+                sentence about the past"
+        (is (true? (:credential/revoked? t)))
+        (is (= "2026-08-26" r2/token-revoked-on))
+        (is (= r2/token-revoked-on (:credential/revoked-on t)))
+        (is (= r2/token-revoked-on (:credential/revoked-observed-on t))
+            "the day the API-token list was re-read after the delete")
+        (is (= :cloudflare-dashboard-delete (:credential/revocation-method t)))
+        (is (true? (:credential/revocation-confirmed? t)))
+        (testing "and how it was checked, naming the target and the list —
+                  a button that was clicked is not a revocation; a list that
+                  no longer holds the named token is"
+          (let [how (:credential/revocation-verified-how t)]
+            (is (str/includes? how r2/token-dashboard-name))
+            (is (str/includes? how "一覧")))))
+      (testing "the revocation came BEFORE the issued expiry, and the record
+                says so rather than leaving a reader to compare two dates and
+                assume the expiry was what ran out"
+        (is (true? (:credential/revoked-before-expiry? t)))
+        (is (pos? (compare r2/token-expires-on r2/token-revoked-on))
+            "the ordering the flag asserts, checked against the dates"))
+      (testing "and what IS true undated is scoped to this machine, not to
+                everywhere: both are properties of a past act"
+        (is (false? (:credential/value-saved-locally? t)))
+        (is (true? (:credential/local-clipboard-cleared? t))))
+      (testing "no surface of this record says 短命 / short-lived / persisted
+                anywhere any more"
+        (let [printed (pr-str r2/live-verification)]
+          (doseq [s ["短命" "数分" "short-lived" "not-persisted"]]
+            (is (not (str/includes? printed s)) s))))
+      (testing "and no surface asserts present-time validity, nor carries the
+                dated non-revocation this replaced. This record is durable:
+                「今も有効」 was the discarded adjective pointed forwards, and
+                「2026-08-26 時点では未失効」 was true when written and is now
+                simply wrong. 「失効済み」 is the one state that cannot rot"
+        (let [printed (pr-str r2/live-verification)]
+          (doseq [s ["今も有効" "現在も有効" "still live" "still valid"
+                     "まだ有効" "いまも有効" "未失効" "分からない"]]
+            (is (not (str/includes? printed s)) s))))
+      (testing "the prose carries the whole sequence — issued with an expiry,
+                deleted before it, checked against the list — so no half of it
+                can be quoted without the rest"
+        (is (str/includes? (:credential/why t) r2/token-dashboard-name))
+        (is (str/includes? (:credential/why t) r2/token-expires-on))
+        (is (str/includes? (:credential/why t) r2/token-revoked-on))
+        (is (str/includes? (:credential/why t) "削除"))
+        (is (str/includes? (:credential/why t) "一覧に存在しない"))
+        (testing "and it says outright that the expiry is not what ended it"
+          (is (str/includes? (:credential/why t) "期限ではなく削除"))))
+      (testing "the one limit that mentions the token dates it the same way"
+        (let [l (first (filter #(str/includes? % "トークン 1 本")
+                               (:verification/limits r2/live-verification)))]
+          (is (some? l))
+          (is (str/includes? l (str r2/token-expires-on " の期限で発行")))
+          (is (str/includes? l (str r2/token-revoked-on " に削除")))))
+      (testing "and the record still carries no credential and no key that
+                `redact` would drop — an expiry says when a token STOPS
+                working, which is the opposite of saying what it is"
+        (is (empty? (sensitive/log-violations t)))
+        (is (not (str/includes? (pr-str t) "R2_CATALOG_TOKEN")))))))
+
+(deftest the-verified-catalog-is-not-a-live-driver-in-any-shipped-deployment
+  (testing "the tables exist and this repository still cannot see them: it
+            constructs no catalog driver, so the operations report says
+            `not-configured` and the screen says 未設定 rather than a pass"
+    (let [s (ops/projection-section nil nil (r2/preflight configured-env))]
+      (is (= :not-configured (:section/answer s)))
+      (is (str/includes? (:section/why s) "未設定は「投影が正しい」ではない"))
+      (testing "and the preflight beside it does not soften that"
+        (let [pf (:section/preflight s)]
+          (is (not (contains? pf :preflight/ready?)))
+          (is (true? (:preflight/configuration-complete? pf)))
+          (is (false? (:preflight/verifies-credentials? pf)))
+          (is (false? (get-in pf [:preflight/verification
+                                  :verification/through-this-repository?]))))))
+    (testing "and it is still a named blocker on the operations report"
+      (let [r (ops/report {:store (f/fresh-store) :employer f/employer-id
+                           :projection-preflight (r2/preflight configured-env)})]
+        (is (some #(= "分析用の投影" (:blocker/what %)) (ops/blockers r)))))))
+
+(deftest the-projection-panel-cannot-show-the-401-without-showing-its-resolution
+  (testing "a panel able to render the diagnosis alone would go on reporting a
+            blocker that was cleared on the day it was found"
+    (let [pf (:section/preflight
+              (ops/projection-section nil nil (r2/preflight configured-env)))
+          h (:preflight/history pf)]
+      (is (some? (:blocker/diagnosis h)))
+      (is (true? (:blocker/resolved? h)))
+      (is (seq (:blocker/resolved-how h)))
+      (is (seq (:blocker/scope-of-resolution h))))))
+
+(deftest the-preflight-never-carries-a-token-either
+  (testing "`read-config` is asserted elsewhere; the preflight is what a
+            screen and `GET /api/operations` actually forward"
+    (let [secret "tok-DO-NOT-LOG-9f3a"
+          p (r2/preflight (assoc configured-env "R2_CATALOG_TOKEN" secret))]
+      (is (not (str/includes? (pr-str p) secret)))
+      (is (not (str/includes? (pr-str (ops/projection-section nil nil p)) secret)))
+      (is (= :provided-by-environment
+             (get-in p [:preflight/config :r2/token-provider]))))))
+
+(deftest the-token-handling-survives-redaction-on-the-way-to-a-report
+  (testing "`redact` walks recursively, so a caveat nested under a blocked
+            name is a caveat that vanishes from the report without anyone
+            noticing. This is the audit trail of a revocation, and a silently
+            dropped one reads exactly like the old `short-lived` — as though
+            nobody had ever had to do anything about the credential"
+    (let [secret "tok-DO-NOT-LOG-4b71"
+          r (ops/report {:store (f/fresh-store) :employer f/employer-id
+                         :projection-preflight
+                         (r2/preflight (assoc configured-env
+                                              "R2_CATALOG_TOKEN" secret))})
+          sect (first (filter #(= :projection (:section/id %))
+                              (:report/sections r)))
+          t (get-in sect [:section/preflight :preflight/verification
+                          :verification/token-handling])]
+      (is (some? t) "dropped by redact, or never forwarded")
+      (is (= r2/token-expires-on (:credential/expires-on t)))
+      (is (true? (:credential/revoked? t)))
+      (is (= r2/token-revoked-on (:credential/revoked-on t))
+          "the boolean survived and its date did not — which would leave the
+           report asserting `revoked` with nothing saying when")
+      (is (true? (:credential/revoked-before-expiry? t))
+          "without this the report shows both dates and no relation between
+           them, and the expiry reads as what ended the credential")
+      (is (= r2/token-dashboard-name (:credential/dashboard-name t))
+          "a revocation on a report that cannot name its target is one nobody
+           can check against the dashboard")
+      (is (some? (:credential/revocation-verified-how t)))
+      (is (false? (:credential/value-saved-locally? t)))
+      (is (true? (:credential/local-clipboard-cleared? t)))
+      (testing "and describing how a credential was handled — including
+                deleting it — is not carrying one: the dates and the LABEL are
+                on the report and the value is not"
+        (is (not (str/includes? (pr-str r) secret)))))))
 
 ;; ---------------------------------------------------------------------------
 ;; The cutover gate

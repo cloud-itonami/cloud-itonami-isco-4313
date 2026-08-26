@@ -460,12 +460,67 @@
 
 (deftest the-operations-screen-shows-the-projection-preflight-without-a-catalog
   (testing "`not-configured` says this process holds no catalog driver. The
-            preflight says whether one could be configured at all, and the two
-            are different next actions"
+            preflight says only whether the three variables are named, and the
+            two are different next actions"
     (let [s (pr-str (views/render :operations (ctx)))]
       (is (str/includes? s "未設定"))
       (is (str/includes? s "R2_CATALOG_URI"))
-      (is (str/includes? s "投影を作れる状態か")))))
+      (is (str/includes? s "設定の事前確認（要求は一切送っていない）"))
+      (testing "and the panel never says 作れる — the preflight reads no token
+                and sends no request, so it cannot answer that"
+        (is (not (str/includes? s "作れる。")))
+        (is (not (str/includes? s "作れない。")))
+        (is (str/includes? s "この確認は資格情報の確認ではない"))))))
+
+(deftest the-operations-screen-shows-the-live-verification-with-its-limits
+  (testing "this panel is the one most likely to be screenshotted into a
+            status report, so 「確かめた」 never appears on it without the four
+            things that were not — above all that nothing went through this
+            repository"
+    (let [rep (ops/report
+               {:store ops-store :employer f/employer-id
+                :projection-preflight
+                (r2/preflight {"R2_CATALOG_URI" "https://catalog.example"
+                               "R2_WAREHOUSE" "acct_bucket"
+                               "R2_CATALOG_TOKEN" "irrelevant"})})
+          tree (views/render :operations
+                             (assoc (ctx) :operations rep
+                                    :operations-blockers (ops/blockers rep)))
+          s (pr-str tree)]
+      (is (str/includes? s "手作業で確かめた"))
+      (is (str/includes? s "実在の給与データは書いていない"))
+      (is (str/includes? s "payroll.projection.catalog は経路上に無い"))
+      (is (str/includes? s ":projection-health は nil"))
+      (testing "the 401 is on the screen as dated history, never without its
+                resolution"
+        (is (str/includes? s "履歴（2026-08-26）"))
+        (is (str/includes? s "解消済み（2026-08-26）")))
+      (testing "the token is on the screen as a DATED revocation measured
+                against the issued expiry, because 「短命」 told an operator
+                there was nothing left to decide while the credential was
+                still usable — and the decision has since been made"
+        (is (str/includes? s "トークンの扱い: 2026-08-26 に Cloudflare の dashboard で削除して失効済み"))
+        (is (str/includes? s "発行時の期限 2026-08-28 より前"))
+        (is (str/includes? s "値はこの機械に一度も保存していない"))
+        (is (str/includes? s "クリップボードは検証後に消去した"))
+        (is (not (str/includes? s "短命")))
+        (is (not (str/includes? s "どこにも保存"))))
+      (testing "and the panel names the exact target and how the delete was
+                checked. A screenshot saying 「失効済み」 with no token name is
+                one nobody can match against the dashboard"
+        (is (str/includes? s "cloud-itonami-payroll-r2-provisioning-260826"))
+        (is (str/includes? s "一覧に存在しないことを確かめた")))
+      (testing "and the panel claims nothing about present-time state in
+                either direction. This text is rendered from a fixed record:
+                「今も有効である」 would go on asserting validity, and
+                「2026-08-26 時点では未失効」 — what stood here — is now simply
+                false. 「失効済み」 is the one state a screenshot can carry
+                safely, because a deleted token stays deleted"
+        (doseq [p ["今も有効" "現在も有効" "まだ有効" "まだ失効させていない"
+                   "未失効" "それ以降の状態はこの記録では分からない"]]
+          (is (not (str/includes? s p)) p)))
+      (testing "and it is still an accessible screen"
+        (is (a11y/clean? (a11y/check tree)))))))
 
 (deftest an-operations-screen-with-no-report-says-so-rather-than-rendering-blank
   (testing "a blank screen there is indistinguishable from a deployment with
