@@ -129,6 +129,62 @@
                                    "未登録は「いいえ」ではない")}
                  "state-unregistered" nil)))
 
+(def answer-chips
+  "The one-word answers a section of `payroll.operations/report` carries.
+
+  A separate vocabulary from `chips` and not an extension of it, because
+  these are answers about a DEPLOYMENT and those are provenances of a FIGURE.
+  Folding them together would let `確定` — which means this repository
+  computed a number — be rendered next to a store, where it would mean
+  nothing anybody could act on.
+
+  Every entry that is not an affirmative answer is `:warn` or `:stop` and
+  never `:muted`. `未設定` and `報告なし` are the two states an operator is
+  most likely to read as `fine`, and this repository's whole position is that
+  a question nobody asked is not a question that was answered."
+  {:registered {:chip/mark "●" :chip/word "登録済み" :chip/tone :ok
+                :chip/means "この事実は登録されている"}
+   :not-registered {:chip/mark "?" :chip/word "未登録" :chip/tone :warn
+                    :chip/means "登録されていない。未登録は零でも「無い」でもない"}
+   :readable {:chip/mark "●" :chip/word "読める" :chip/tone :ok
+              :chip/means "保存先を最後まで辿れた。空であることとは別である"}
+   :unreadable {:chip/mark "▲" :chip/word "読めない" :chip/tone :stop
+                :chip/means "辿れない chain がある。件数は読めた分の下限である"}
+   :not-reported {:chip/mark "?" :chip/word "報告なし" :chip/tone :warn
+                  :chip/means "この store は自身の健全性を答えない。答えないことは「健全である」ではない"}
+   :built {:chip/mark "●" :chip/word "構築済み" :chip/tone :ok
+           :chip/means "表が存在し、読める。投影が正しいことの証拠ではない"}
+   :not-built {:chip/mark "?" :chip/word "未構築" :chip/tone :warn
+               :chip/means "catalog には届くが、表がまだ作られていない。故障ではなく未構築である"}
+   :unreachable {:chip/mark "▲" :chip/word "到達不能" :chip/tone :stop
+                 :chip/means "catalog に届かない"}
+   :not-configured {:chip/mark "?" :chip/word "未設定" :chip/tone :warn
+                    :chip/means "設定されていない。未設定は「投影が正しい」ではない"}})
+
+(defn answer-chip
+  "A section's one-word answer. An answer this namespace has not classified
+  gets `unknown-chip` and never a blank — a state nobody classified is
+  exactly as actionable as an unknown figure."
+  [a]
+  (chip* (get answer-chips a unknown-chip)
+         (str "state-" (name (or a :unknown)))
+         nil))
+
+(defn met-chip
+  "Whether one cutover condition is met.
+
+  `未了` and not `いいえ`: the question is not a yes/no about a fact somebody
+  registered, it is whether a condition on switching off the incumbent
+  payroll system holds — and the operator's next action is to work it down."
+  [met? label]
+  (if met?
+    (chip* {:chip/mark "●" :chip/word "満たしている" :chip/tone :ok
+            :chip/means (str label "は満たされている")}
+           "state-met" nil)
+    (chip* {:chip/mark "▲" :chip/word "未了" :chip/tone :stop
+            :chip/means (str label "はまだ満たされていない")}
+           "state-unmet" nil)))
+
 (defn amount-text
   "A figure's amount as text for a cell, or the word for its state.
 

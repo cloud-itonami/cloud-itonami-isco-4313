@@ -27,15 +27,29 @@
   unverified is a different act from claiming it works — and pretending the
   latter is what this whole repository is built to refuse.
 
-  ## 住民税 is in the vocabulary and has nowhere to go
+  ## 住民税 has a counterpart, and `:mf/no-counterpart` now has no members
 
-  MoneyForward withholds 住民税 (特別徴収). **This actor has no concept of it
-  at all**: no governor rule, no payslip line, no journal account, nothing.
-  It is mapped here to `:mf/no-counterpart` rather than dropped, because a
-  column silently discarded during an import is a deduction that vanishes
-  between two systems, and the whole point of a reconciliation is to notice
-  exactly that. `payroll.mf.reconcile` reports it as a named gap on every
-  file that carries it."
+  MoneyForward withholds 住民税 (特別徴収), and the column maps to
+  `:resident-tax-withheld` — so it is compared field by field like every
+  other deduction, and `no-counterpart-columns` is EMPTY. That mattered
+  beyond this file: `payroll.cutover`'s third condition is *no
+  `:mf/no-counterpart` column carried a value*, and while 住民税 had none the
+  gate was unmeetable by construction, because every real export carries the
+  column.
+
+  `:mf/no-counterpart` stays in the vocabulary with no members, and that is
+  deliberate. It is what `payroll.mf.import` maps a known-but-unrepresentable
+  column to, and a column silently discarded during an import is a deduction
+  that vanishes between two systems — the whole point of a reconciliation is
+  to notice exactly that. The next column MoneyForward carries and this actor
+  cannot represent lands there rather than nowhere.
+
+  What is still true is that this actor COMPUTES no 住民税. The counterpart is
+  a registered 決定通知書 (`payroll.juminzei`) with a payslip line
+  (`payroll.meisai/deduction-lines`) whose figure is `:declared`, so a value
+  this actor has no notice for is `:not-comparable` and one for an employee
+  registered as 普通徴収 is `:only-in-mf`. Neither vanishes and neither is
+  scored as agreement."
   (:require [clojure.string :as str]))
 
 (def unverified-note
@@ -71,14 +85,18 @@
     :mf/required? false :mf/verified? false}
    {:mf/column "所得税" :mf/to :income-tax-withheld :mf/kind :yen
     :mf/required? false :mf/verified? false}
-   {:mf/column "住民税" :mf/to :mf/no-counterpart :mf/kind :yen
-    :mf/required? false :mf/verified? false
-    :mf/no-counterpart-why
-    (str "住民税の特別徴収をこの actor は一切扱っていない。"
-         "governor の規則も、給与明細の行も、仕訳の勘定科目も無い。"
-         "地方税法 第三百二十一条の五（特別徴収義務者の徴収及び納入）は"
-         "この repository では未読である。"
-         "この列は取り込まれず、差分レポートに欠落として現れる")}
+   ;; 住民税 HAD no counterpart, and that made `docs/maturity.md`'s G1
+   ;; unmeetable by construction — its sixth condition blocked any
+   ;; reconciliation whose 住民税 column carried a value, so a real employer's
+   ;; export could never reconcile. `payroll.juminzei` gives it one: a
+   ;; municipality's 決定通知書, registered, with a payslip line
+   ;; (`payroll.meisai/deduction-lines`) and a comparison field.
+   ;;
+   ;; What is still true is that this actor COMPUTES no 住民税. The counterpart
+   ;; is a registered notice, so an export carrying a value this actor has no
+   ;; notice for now differs (`:only-in-mf`) rather than vanishing.
+   {:mf/column "住民税" :mf/to :resident-tax-withheld :mf/kind :yen
+    :mf/required? false :mf/verified? false}
    {:mf/column "控除合計" :mf/to :deduction-total :mf/kind :yen
     :mf/required? false :mf/verified? false}
    {:mf/column "差引支給額" :mf/to :net :mf/kind :yen

@@ -99,4 +99,19 @@
   :test {:extra-paths ["test"]
          :extra-deps {io.github.cognitect-labs/test-runner
                       {:git/tag "v0.5.1" :git/sha "dfb30dd"}}
-         :main-opts ["-m" "cognitect.test-runner"]}}}
+         :main-opts ["-m" "cognitect.test-runner"]}
+
+  ;; The 源泉徴収税額表 importer. Apache POI reads the 国税庁's legacy BIFF8
+  ;; workbook; `tools/import_nta_2026.clj` turns one pinned .xls into
+  ;; `src/payroll/rates/monthly_2026.cljc`.
+  ;;
+  ;; It is an ALIAS and not a dependency, and that distinction is the whole
+  ;; point: POI is a build-time tool, `tools/` is not on `:paths`, and `:deps`
+  ;; above stays exactly as it is. This repo's hard property is ZERO
+  ;; `:local/root` and a minimal `:deps`; a table importer that dragged a
+  ;; spreadsheet library onto the production classpath would have traded that
+  ;; property for a convenience nobody asked for. The generated file is plain
+  ;; data with no dependency of its own, so the runtime never meets POI.
+  :importer {:extra-paths ["tools"]
+             :extra-deps {org.apache.poi/poi {:mvn/version "5.2.5"}}
+             :main-opts ["-m" "import-nta-2026"]}}}

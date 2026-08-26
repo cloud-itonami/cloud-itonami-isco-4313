@@ -25,7 +25,8 @@
       :or {employee-number "9001" period f/period gross f/gross
            health f/health-insurance care f/care-insurance
            pension f/employees-pension employment f/employment-insurance
-           tax f/income-tax resident-tax 0 total f/deduction-total net f/net}}]
+           tax f/income-tax resident-tax f/resident-tax
+           total f/deduction-total net f/net}}]
   (str/join "," [employee-number "従業員甲" period gross health care pension
                  employment tax resident-tax total net]))
 
@@ -44,13 +45,22 @@
     (is (false? (:provenance/verified? mf/provenance-record)))
     (is (zero? (:provenance/columns-verified mf/provenance-record)))))
 
-(deftest resident-tax-is-mapped-to-nothing-and-said-so
-  (testing "MoneyForward withholds 住民税 and this actor has no rule, no
-            payslip line and no account for it. A column silently discarded
-            during an import is a deduction that vanishes between two systems"
-    (is (= ["住民税"] schema/no-counterpart-columns))
-    (is (str/includes? (:mf/no-counterpart-why (schema/by-column "住民税"))
-                       "地方税法"))))
+(deftest resident-tax-now-has-a-counterpart-and-nothing-else-does
+  (testing "住民税 used to map to `:mf/no-counterpart`, which made the cutover
+            gate's sixth condition unmeetable by construction: any real
+            employer's export carries the column. `payroll.juminzei` gives it
+            a counterpart — a registered municipality notice — so the column
+            is compared rather than reported as vanished"
+    (is (= :resident-tax-withheld (:mf/to (schema/by-column "住民税"))))
+    (is (empty? schema/no-counterpart-columns))
+    (testing "and the MECHANISM is intact: a column mapped to
+              :mf/no-counterpart would still be carried into the report and
+              would still block, which is what makes the vocabulary's
+              emptiness a finding rather than a removal"
+      (is (some? (resolve 'payroll.mf.import/parse)))
+      (is (= [] (vec (for [c schema/columns
+                           :when (= :mf/no-counterpart (:mf/to c))]
+                       (:mf/column c))))))))
 
 (deftest an-employee-is-matched-by-a-registered-number-and-never-by-name
   (testing "matching on a name joins two records for two different people who
@@ -162,25 +172,24 @@
       (is (str/includes? (:row/unmapped-why row*) "9999"))
       (is (str/includes? (:row/unmapped-why row*) "氏名での推測照合はしない")))))
 
-(deftest a-no-counterpart-column-carries-its-values-into-the-report
-  (let [r (mf/parse (file (row :resident-tax 12000)) [(f/contract)])
-        nc (first (:import/no-counterpart r))]
-    (is (= "住民税" (:column nc)))
-    (is (= ["12000"] (:values-seen nc)))
-    (is (true? (:carries-value? nc)))))
+(deftest a-resident-tax-value-is-imported-rather-than-reported-as-vanished
+  (testing "it has a counterpart now, so it becomes an `:imported` figure the
+            reconciliation compares — the column no longer appears in
+            :import/no-counterpart because nothing does"
+    (let [r (mf/parse (file (row :resident-tax 12000)) [(f/contract)])
+          row* (first (:import/rows r))]
+      (is (empty? (:import/no-counterpart r)))
+      (is (= 12000 (get-in row* [:row/values :resident-tax-withheld])))
+      (is (= :imported (get-in row*
+                               [:row/figures :resident-tax-withheld
+                                :figure/provenance]))))))
 
-(deftest a-no-counterpart-column-of-zeroes-carries-no-value
-  (testing "the column is present and nothing was withheld. A blocker that can
-            never be cleared is one operators learn to read past"
-    (let [nc (first (:import/no-counterpart
-                     (mf/parse (file (row :resident-tax 0)) [(f/contract)])))]
-      (is (= ["0"] (:values-seen nc)))
-      (is (false? (:carries-value? nc)))))
-  (testing "and an unreadable value in that column DOES count — it is
-            something that vanished, and nobody knows how much"
-    (let [nc (first (:import/no-counterpart
-                     (mf/parse (file (row :resident-tax "不明")) [(f/contract)])))]
-      (is (true? (:carries-value? nc))))))
+(deftest an-unreadable-resident-tax-still-rejects-its-row
+  (testing "the column being mapped does not make a cell readable; a value
+            this repository has not seen rejects the row with its raw text"
+    (let [r (mf/parse (file (row :resident-tax "不明")) [(f/contract)])]
+      (is (= 1 (count (:import/rejected r))))
+      (is (str/includes? (:row/why (first (:import/rejected r))) "住民税")))))
 
 (deftest a-short-row-is-padded-rather-than-throwing
   (testing "an export whose last columns are empty is a file, not a crash"
@@ -244,17 +253,30 @@
       (is (some #(str/includes? % "比較していないことは違う")
                 (:reconcile/blockers r))))))
 
-(deftest a-resident-tax-value-blocks-the-reconciliation
-  (testing "a deduction one system makes and the other cannot is not a
-            discrepancy in a figure"
-    (let [r (reconcile (file (row :resident-tax 12000)))]
+(deftest a-resident-tax-that-disagrees-with-the-notice-blocks
+  (testing "the column is compared now, so a MoneyForward figure that differs
+            from the registered 決定通知書 is a DIFFERENCE rather than a
+            column that vanished — which is what makes the cutover gate
+            meetable at all"
+    (let [r (reconcile (file (row :resident-tax 12000)))
+          fld (first (filter #(= :resident-tax-withheld (:field/key %))
+                             (:run/fields (first (:reconcile/runs r)))))]
       (is (not (:reconcile/reconciled? r)))
-      (is (some #(str/includes? % "住民税") (:reconcile/blockers r))))))
+      (is (= :differ (:field/verdict fld)))
+      (is (= (- 12000 f/resident-tax) (:field/delta fld))))))
 
-(deftest a-resident-tax-of-zero-does-not-block
-  (testing "the column is present and empty of value; there is nothing that
-            vanished"
-    (is (:reconcile/reconciled? (reconcile (file (row :resident-tax 0)))))))
+(deftest a-run-whose-resident-tax-was-never-assessed-is-not-scored-as-agreement
+  (testing ":not-comparable, never :agree — the state every held figure lands
+            in, and the one a naive reconciliation calls a pass"
+    (let [r (recon/reconcile
+             {:import (mf/parse (file (row :resident-tax 12000)) [(f/contract)])
+              :ours {[f/contract-id f/period]
+                     (f/lines {:verdict (f/verdict-for) :juminzei :none})}
+              :period f/period})
+          fld (first (filter #(= :resident-tax-withheld (:field/key %))
+                             (:run/fields (first (:reconcile/runs r)))))]
+      (is (not (:reconcile/reconciled? r)))
+      (is (= :not-comparable (:field/verdict fld))))))
 
 (deftest an-unmapped-row-blocks-the-reconciliation
   (let [r (reconcile (file (row :employee-number "9999")))]
@@ -292,7 +314,7 @@
 (deftest the-compared-fields-are-taken-from-the-payslip-lines
   (testing "a deduction added to `payroll.meisai/deduction-lines` is compared
             here without a second edit"
-    (is (= 7 (count recon/compared-fields)))
+    (is (= 8 (count recon/compared-fields)))
     (is (= :gross (:field/key (first recon/compared-fields))))
     (is (= :net (:field/key (last recon/compared-fields))))))
 

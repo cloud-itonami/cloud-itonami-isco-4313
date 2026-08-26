@@ -13,6 +13,7 @@
             [payroll.fixtures :as f]
             [payroll.host.config :as config]
             [payroll.host.jvm :as host]
+            [payroll.juminzei :as juminzei]
             [payroll.store :as store])
   (:import (java.net URI)
            (java.net.http HttpClient HttpRequest HttpRequest$BodyPublishers
@@ -284,7 +285,46 @@
           ;; the fixture contract registered here carries no :mf/employee-number,
           ;; so the row is unmapped — which is the honest outcome and is what
           ;; the screen has to say.
-          (is (str/includes? (:body r) "契約に紐づいていない"))))))))
+          (is (str/includes? (:body r) "契約に紐づいていない"))))
+
+      (testing "register a 住民税 決定通知書, and land on the redirect"
+        (let [enc #(java.net.URLEncoder/encode (str %) "UTF-8")
+              n f/resident-tax-notice-as-transcribed
+              r (send! port "POST" "/console/juminzei-notice"
+                       {:headers form
+                        :body (str/join
+                               "&"
+                               (concat
+                                ["kind=decision"
+                                 (str "municipality=" (enc (:notice/municipality n)))
+                                 (str "tax-year=" (:notice/tax-year n))
+                                 (str "reference=" (enc (:notice/reference n)))
+                                 (str "revision=" (:notice/revision n))
+                                 (str "designated-number="
+                                      (enc (:notice/designated-number n)))
+                                 (str "annual-total=" (:notice/annual-total n))
+                                 (str "registered-at=" (:notice/registered-at n))]
+                                (for [k juminzei/month-keys]
+                                  (str (name k) "=" (get (:notice/months n) k)))))})]
+          (is (= 303 (:status r)))
+          (testing "the host carries the console's Location through. Without
+                    the header a 303 is a blank page, and a blank page after a
+                    registration reads as a registration that failed"
+            (is (= "/console/operations?notice=registered"
+                   (get (:headers r) "location"))))
+          (is (= 1 (count (store/juminzei-notices st f/employer-id))))
+          (testing "and following it by hand lands on a screen that confirms
+                    by reading the store back"
+            (let [g (send! port "GET" "/console/operations?notice=registered"
+                           {:headers did})]
+              (is (= 200 (:status g)))
+              (is (str/includes? (:body g) "通知を登録した"))
+              (is (str/includes? (:body g)
+                                 "いまこの事業主に登録されている通知は 1 件"))
+              (testing "with no 月割額 and no 年税額 on it"
+                (is (not (str/includes? (:body g) (str f/resident-tax))))
+                (is (not (str/includes? (:body g)
+                                        (str (* 12 f/resident-tax))))))))))))))
 
 ;; ---------------------------------------------------------------------------
 ;; Headers

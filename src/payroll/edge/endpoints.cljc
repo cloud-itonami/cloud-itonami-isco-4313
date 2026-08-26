@@ -1,5 +1,5 @@
 (ns payroll.edge.endpoints
-  "The HTTP surface this payroll actor exposes — exactly five routes:
+  "The HTTP surface this payroll actor exposes — exactly six routes:
 
       POST /api/payroll-run             draft a payroll run
       GET  /api/payroll-run/:contract-id  the whole life of one contract's runs
@@ -8,6 +8,8 @@
                                         runs this employer submitted
       POST /api/year-end-adjustment     is a 年末調整 owed for one employee and
                                         one year, and what can be computed
+      GET  /api/operations              運用の現況 — every section an operator
+                                        works down, and the flat blocker list
 
   and nothing else. Per `manifest/repository-rules.edn` an itonami actor is
   `:on-demand`: it answers a request and stops.
@@ -113,6 +115,7 @@
   `nobody has read the withholding law where this employer pays` as the same
   green tick."
   (:require [payroll.actor :as actor]
+            [payroll.operations :as operations]
             [payroll.store :as store]
             [payroll.handoff :as handoff]
             #?(:clj [clojure.edn :as edn] :cljs [cljs.reader :as edn])))
@@ -147,6 +150,7 @@
     nil          nothing configured
     :ephemeral   `MemStore` — does not survive the process
     :datomic     `DatomicStore` over langchain.db
+    :kotobase    `payroll.store.kotobase/KotobaseStore` — the durable one
 
   Returns nil for anything else, including an unrecognised value — a typo in a
   deployment variable must not silently select a storage mode, and on this
@@ -158,14 +162,23 @@
   (case (some-> (get env "PAYROLL_STORE") .trim)
     "ephemeral" :ephemeral
     "datomic" :datomic
+    "kotobase" :kotobase
     nil))
 
 (defn store-for
-  "A store for `mode`, or nil when nothing is configured."
+  "A store for `mode`, or nil when nothing is configured.
+
+  `:kotobase` deliberately returns **nil**. A durable store needs a
+  transport, an encryption provider and a scoped credential, none of which is
+  a string an environment variable can carry — `payroll.host.config` states
+  the requirement and `payroll.host.jvm/start!` refuses to start without an
+  injected store. Building one here from defaults would mean inventing all
+  three, and the one that would be invented is the encryption."
   [mode]
   (case mode
     :ephemeral (store/mem-store)
     :datomic (store/datomic-store)
+    :kotobase nil
     nil))
 
 (defn store-unconfigured-response
@@ -179,7 +192,10 @@
   []
   {:status 503
    :body {:ok false :error "no store configured"
-          :hint (str "set PAYROLL_STORE=datomic for the langchain.db backend,"
+          :hint (str "set PAYROLL_STORE=kotobase for the durable backend"
+                     " (which additionally needs an injected transport,"
+                     " tenant, scoped auth and encryption provider),"
+                     " PAYROLL_STORE=datomic for the langchain.db backend,"
                      " or PAYROLL_STORE=ephemeral for a non-persisting"
                      " smoke test")}})
 
@@ -817,6 +833,36 @@
 ;; The surface itself
 ;; ---------------------------------------------------------------------------
 
+(def operations-path "/api/operations")
+
+(defn operations-core
+  "`GET /api/operations` — 運用の現況 for the calling employer.
+
+  `payroll.operations/report` assembled once and served as EDN. There is no
+  second assembler: a screen and an endpoint that each build their own answer
+  are two answers, and the one nobody is looking at is the one that goes
+  stale.
+
+  **The console renders this report**, on the seventh screen
+  (`/console/operations`, `payroll.ui.views/views`), and
+  `payroll.edge.console-test` asserts the screen's report is `=` to this
+  endpoint's. So there are three ways to read it — this endpoint, that screen,
+  and `payroll.operations/->text` — and exactly one assembly behind them. This
+  paragraph used to say no screen existed, which was true when it was written
+  and stayed on the page after the screen landed; it is corrected rather than
+  deleted, because a docstring that has been wrong once is worth saying so.
+
+  `store-health` and `projection-health` are passed IN by the host, which is
+  the only place that holds a transport or a catalog. Absent, the report says
+  `not-reported` / `not-configured` and NOT `healthy` — the whole point of
+  those two values is that they are distinguishable from a pass."
+  [store allowlist caller-did extras]
+  (if-let [employer (employer-for allowlist caller-did)]
+    {:status 200
+     :body (assoc (operations/report (merge {:store store :employer employer} extras))
+                  :ok true)}
+    {:status 403 :body {:ok false :error "caller not permitted"}}))
+
 (def run-path-prefix "/api/payroll-run/")
 
 (defn route
@@ -834,16 +880,24 @@
   A nil `mode` still serves 503 here rather than at the host, so the decision
   not to guess a storage backend is testable without a platform.
 
-  Having one dispatcher rather than five exported handlers is what makes
-  `there are exactly five routes` a testable claim instead of a sentence in a
+  Having one dispatcher rather than six exported handlers is what makes
+  `there are exactly six routes` a testable claim instead of a sentence in a
   README. A path nobody declared is 404 and a method nobody declared is 405 —
   distinct, because `POST /api/ledger` is a caller using the wrong verb on a
   real route and `POST /api/disburse` is a caller inventing one that this actor
   refuses to have."
-  [store mode allowlist caller-did {:keys [method path body]}]
+  ([store mode allowlist caller-did request]
+   (route store mode allowlist caller-did request {}))
+  ([store mode allowlist caller-did {:keys [method path body]} extras]
   (if (or (nil? mode) (nil? store))
     (store-unconfigured-response)
     (cond
+
+      (= path operations-path)
+      (if (= method :get)
+        (operations-core store allowlist caller-did extras)
+        {:status 405 :body {:ok false :error "method not allowed" :allow [:get]}})
+
       (= path "/api/payroll-run")
       (if (= method :post)
         (submit-payroll-run-core! store mode allowlist caller-did body)
@@ -871,4 +925,4 @@
         {:status 405 :body {:ok false :error "method not allowed" :allow [:get]}})
 
       :else
-      {:status 404 :body {:ok false :error "no such route"}})))
+      {:status 404 :body {:ok false :error "no such route"}}))))

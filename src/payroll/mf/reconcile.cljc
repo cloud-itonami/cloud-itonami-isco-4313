@@ -35,11 +35,17 @@
 
   ## Columns this actor has no concept of are a failure, not a footnote
 
-  住民税 is the live case: MoneyForward withholds it and this actor has no
-  rule, no line and no account for it. A row where MoneyForward deducted
-  住民税 and this actor did not is not a discrepancy in a figure — it is a
-  deduction one system makes and the other cannot. `reconciled?` is false
-  while any such column carries a value, and the report names it."
+  住民税 is no longer one of them. MoneyForward withholds it, and this actor
+  now has a counterpart: `payroll.juminzei` holds a municipality's 決定通知書
+  history, and `payroll.meisai` declares a 住民税 line for a month that
+  notice covers when the contract is classified `:special-collection`. It
+  still COMPUTES no 住民税 — the figure is the municipality's, transcribed —
+  and an unknown or unclassified obligation stays a refusal rather than a
+  zero, so such a row is `:not-comparable` and never scored as agreement.
+
+  A column this actor genuinely has no concept of is still a failure and not
+  a footnote: `reconciled?` is false while any such column carries a value,
+  and the report names it."
   (:require [clojure.string :as str]
             [payroll.artifact.text :as text]
             [payroll.meisai :as meisai]

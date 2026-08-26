@@ -187,9 +187,22 @@
 (deftest a-fully-registered-contract-has-no-gaps-worth-showing
   (let [gaps (touroku/registration-gaps (f/contract))]
     (is (= #{:employment/recipient-residency :employment/paid-in
-             :contract/allowances :contract/commuting-allowance}
+             :contract/allowances :contract/commuting-allowance
+             ;; 住民税 is left unregistered on purpose, and the fixture is
+             ;; the only place that decision is visible: a test that wants
+             ;; the payslip line to carry a figure registers the obligation
+             ;; itself, so a run that carries one is a run something
+             ;; classified rather than one the fixture classified for it.
+             :employment/resident-tax-obligation}
            (set (map :gap/key gaps)))
-        "only the facts the fixture deliberately leaves unregistered")))
+        "only the facts the fixture deliberately leaves unregistered")
+    (testing "and the 住民税 gap says what its absence IS, since 未登録 there is
+              neither 対象外 nor a default to 特別徴収"
+      (let [g (first (filter #(= :employment/resident-tax-obligation
+                                 (:gap/key %))
+                             gaps))]
+        (is (str/includes? (:gap/consequence g) "まだ誰も分類していない"))
+        (is (str/includes? (:gap/consequence g) "「対象外」ではない"))))))
 
 (deftest an-employer-with-no-jurisdiction-is-a-named-gap
   (let [gaps (touroku/employer-gaps {:client-id "emp-1" :name "x"})]

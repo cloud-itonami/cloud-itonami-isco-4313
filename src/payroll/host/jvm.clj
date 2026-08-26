@@ -130,9 +130,40 @@
   (when-let [host (header exchange "Host")]
     (str (or (header exchange "X-Forwarded-Proto") "http") "://" host)))
 
+(defn ->response-bytes
+  "The bytes to put on the wire for one response body.
+
+  `body` is either a String — encoded UTF-8, which is what every route that
+  serves text or EDN wants — or a **sequence of unsigned byte values**, which
+  is written VERBATIM.
+
+  The second case exists for exactly one thing and the whole point is that it
+  does not go through a String. `payroll.artifact.zengin` produces a 全銀
+  総合振込 file in Shift_JIS, where each record is 120 bytes because each
+  permitted character is one byte in that encoding. Handing those bytes back
+  as a Clojure string and letting this function `getBytes(UTF_8)` would turn
+  every halfwidth katakana into THREE bytes, so a 120-byte record becomes
+  anything up to 360 — and the file would still look right in a terminal,
+  still contain the right characters, and be rejected by the bank at an
+  offset nobody can explain from the console.
+
+  Byte values are masked to 0-255 rather than assumed to be in range: a
+  value outside it is a bug upstream, and `(byte 200)` throws on the JVM
+  while `unchecked-byte` silently wraps. Masking makes 200 mean 0xC8, which
+  is what the encoder meant, and anything genuinely out of range is caught by
+  the length assertions in `payroll.artifact.zengin/->fixed-width-bytes`
+  before it reaches here."
+  ^bytes [body]
+  (cond
+    (nil? body) (byte-array 0)
+    (string? body) (.getBytes ^String body StandardCharsets/UTF_8)
+    (sequential? body) (byte-array (map #(unchecked-byte (bit-and (int %) 0xFF))
+                                        body))
+    :else (.getBytes (str body) StandardCharsets/UTF_8)))
+
 (defn- respond!
-  [^HttpExchange exchange status content-type ^String body headers]
-  (let [bytes (.getBytes (or body "") StandardCharsets/UTF_8)
+  [^HttpExchange exchange status content-type body headers]
+  (let [bytes (->response-bytes body)
         h (.getResponseHeaders exchange)]
     (doseq [[k v] headers] (.set h ^String k ^String v))
     (.set h "Content-Type" (or content-type "text/plain; charset=utf-8"))
@@ -150,6 +181,38 @@
   reverse."
   [body]
   (pr-str body))
+
+(defn request-extras
+  "What only the host can measure, for whichever surface is being served.
+
+  ONE function and not two call sites. The console and `GET /api/operations`
+  render the same `payroll.operations/report`, so a host that measured the
+  store for the endpoint and not for the screen would produce two different
+  answers to one question — and the screen, which is what a non-technical
+  operator actually reads, would be the one saying `報告なし` about a store
+  that had just answered.
+
+  Every measurement is optional and an absent one is ABSENT. `nil` reaches
+  `payroll.operations` as `not-reported` / `not-configured`, which are
+  distinguishable from a pass; a `{}` or a `false` here would be this host
+  answering a question on the store's behalf.
+
+  The health call is wrapped because it is the one thing here that touches a
+  transport. A store that cannot answer must not take the console down — the
+  operator asking `what is wrong with the store` is asking during the outage.
+
+  `:projection-health` is nil in every deployment this repository ships and
+  that is not an oversight: a health map needs a catalog DRIVER, and no
+  driver is constructed here. What the host CAN answer without one is whether
+  the projection could be built at all, which `payroll.host.config` computed
+  from the environment and this passes through."
+  [store config]
+  {:store-health (when (= :kotobase (:config/store-mode config))
+                   (try ((requiring-resolve 'payroll.store.kotobase/health)
+                         store)
+                        (catch Throwable _ nil)))
+   :projection-health nil
+   :projection-preflight (:config/projection-preflight config)})
 
 (defn- handle
   [{:keys [store config advisor css]} ^HttpExchange exchange]
@@ -180,6 +243,7 @@
                      {:store store :store-mode mode :allowlist allowlist
                       :caller-did did :css css :advisor advisor
                       :durability (:config/durability config)
+                      :extras (request-extras store config)
                       :self-origin (self-origin exchange)}
                      {:method method :path path
                       :query (query-of uri)
@@ -189,7 +253,13 @@
                         (cond-> headers
                           (:filename r)
                           (assoc "Content-Disposition"
-                                 (str "attachment; filename=\"" (:filename r) "\"")))))))
+                                 (str "attachment; filename=\"" (:filename r) "\""))
+                          ;; A 303 without this header is a blank page, and a
+                          ;; blank page after a registration reads as a
+                          ;; registration that failed. The console decides
+                          ;; WHERE to send the operator; this only carries it.
+                          (:location r)
+                          (assoc "Location" (:location r)))))))
 
         ;; ---- the API ------------------------------------------------
         (str/starts-with? path "/api/")
@@ -198,7 +268,11 @@
             (respond! exchange 413 "text/plain; charset=utf-8"
                       "request body too large" headers)
             (let [r (api/route store mode allowlist did
-                               {:method method :path path :body raw})]
+                               {:method method :path path :body raw}
+                               ;; The same measurements the console gets. See
+                               ;; `request-extras` — one function, because two
+                               ;; would be two answers to one question.
+                               (request-extras store config))]
               (respond! exchange (:status r) "application/edn; charset=utf-8"
                         (edn-body (:body r)) headers))))
 
@@ -236,6 +310,32 @@
                    "serving the console unstyled"))
         "")))
 
+(defn kotobase-durability
+  "What the injected store's transport says about itself.
+
+  Asked of the TRANSPORT and not of the store, and not of the configuration:
+  `payroll.host.config/durability` will not answer `does this survive` on a
+  transport's behalf, and this is the only place where the transport is in
+  hand. A store that is not a `KotobaseStore` — which cannot happen through
+  `start!` and can through a test — answers `not durable`, because an
+  unrecognised store is not a durable one.
+
+  Requires `payroll.store.kotobase` lazily so the JVM host does not pull the
+  durable backend in for the two modes that do not use it."
+  [st]
+  (if (nil? st)
+    {}
+    (let [t (:transport st)
+          descr (when t ((requiring-resolve
+                          'payroll.kotobase.transport/describe) t))]
+      {:transport-durable? (true? (:transport/durable? descr))
+       ;; the reconstruction is a property this repository measures; the
+       ;; health call walks all seven chains and says whether it could.
+       :reconstructs? (boolean
+                       (:store/readable?
+                        ((requiring-resolve 'payroll.store.kotobase/health) st)))
+       :transport (dissoc descr :transport/durable?)})))
+
 (defn start!
   "Start a server from `env`, or return the refusal.
 
@@ -260,27 +360,48 @@
         :host/why (:config/why config)
         :host/hint (:config/hint config)}
        (let [st (or store (api/store-for (:config/store-mode config)))
-             css (dds-css)
-             ctx {:store st :config config :advisor advisor :css css}
-             server (HttpServer/create
-                     (InetSocketAddress. ^String (:config/bind config)
-                                         ^int (:config/port config))
-                     0)
-             pool (Executors/newFixedThreadPool 8)]
-         (.createContext server "/"
-                         (reify HttpHandler
-                           (handle [_ exchange] (handle ctx exchange))))
-         (.setExecutor server pool)
-         (.start server)
-         {:host/status :started
-          :host/port (.getPort (.getAddress server))
-          :host/bind (:config/bind config)
-          :host/store st
-          :host/durability (:config/durability config)
-          :host/stop! (fn []
-                        (.stop server 0)
-                        (.shutdownNow pool)
-                        (.awaitTermination pool 2 TimeUnit/SECONDS))})))))
+             ;; `PAYROLL_STORE=kotobase` and no injected store: refuse, and
+             ;; say what is missing. `api/store-for` returns nil for that
+             ;; mode by design — a durable store needs a transport, an
+             ;; encryption provider and a scoped credential, none of which is
+             ;; a string an environment variable carries. Starting anyway
+             ;; would give every read an empty store, and the deployment
+             ;; would look healthy while remembering nothing.
+             config (if (= :kotobase (:config/store-mode config))
+                      (assoc config :config/durability
+                             (config/durability
+                              :kotobase (kotobase-durability st)))
+                      config)]
+         (if (and (= :kotobase (:config/store-mode config)) (nil? st))
+           {:host/status :refused
+            :host/why "PAYROLL_STORE=kotobase だが store が注入されていない"
+            :host/hint (str "durable 配備は payroll.store.kotobase/store に "
+                            "transport・tenant・暗号化プロバイダ・"
+                            "scope を絞った資格・CAS を渡して store を作り、"
+                            "start! の :store で渡す。"
+                            "この repository は network に到達する transport を"
+                            "同梱していないので、環境変数だけでは起動しない")}
+           (let [css (dds-css)
+                 ctx {:store st :config config :advisor advisor :css css}
+                 server (HttpServer/create
+                         (InetSocketAddress. ^String (:config/bind config)
+                                             ^int (:config/port config))
+                         0)
+                 pool (Executors/newFixedThreadPool 8)]
+             (.createContext server "/"
+                             (reify HttpHandler
+                               (handle [_ exchange] (handle ctx exchange))))
+             (.setExecutor server pool)
+             (.start server)
+             {:host/status :started
+              :host/port (.getPort (.getAddress server))
+              :host/bind (:config/bind config)
+              :host/store st
+              :host/durability (:config/durability config)
+              :host/stop! (fn []
+                            (.stop server 0)
+                            (.shutdownNow pool)
+                            (.awaitTermination pool 2 TimeUnit/SECONDS))})))))))
 
 (defn -main
   "Start from the process environment, or print the refusal and exit 78.

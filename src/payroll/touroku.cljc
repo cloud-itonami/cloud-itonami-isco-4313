@@ -73,6 +73,9 @@
 
 (defn- month-or-absent [v] (or (nil? v) (hoken/month? v)))
 
+(defn- resident-tax-obligation-or-absent [v]
+  (or (nil? v) (contains? #{:special-collection :not-special-collection} v)))
+
 (def contract-fields
   "Every fact that may be registered on a contract, what it is for, and what
   admits it.
@@ -144,6 +147,25 @@
     :field/label "扶養控除等申告書の提出" :field/required? false
     :field/admits boolean-or-absent :field/why "true / false / 未登録"
     :field/holds "紙の書類であり software からは観測できない。未登録は保留"}
+
+   ;; 住民税の特別徴収（payroll.juminzei/assess の :obligation）
+   {:field/key :employment/resident-tax-obligation
+    :field/label "住民税の特別徴収" :field/required? false
+    :field/admits resident-tax-obligation-or-absent
+    :field/why ":special-collection / :not-special-collection / 未登録"
+    :field/holds
+    (str "未登録は run を保留する —— ただし四つの被保険者資格の未登録とは"
+         "形が違う。あちらは「観測していない」であり、こちらは"
+         "「まだ誰も分類していない」である。"
+         "所得税の源泉徴収義務がある事業主は特別徴収義務者に指定される"
+         "（地方税法 第41条・第321条の4・第328条の5第1項）ので、"
+         "未登録は「対象外」ではない。"
+         "手引きは「この普通徴収切替理由書の提出がない場合、原則どおり、"
+         "特別徴収対象者となります」と言うが、"
+         "それは未登録を特別徴収として既定してよいという意味ではない —— "
+         "誰がそう分類したのかが記録されていないからである。"
+         "payroll.juminzei/assess は :municipality-not-declared を答え、"
+         "明細の住民税の行は、通知書がその月を網羅していても保留される")}
 
    ;; 賃金の基礎（payroll.chingin）
    {:field/key :contract/allowances :field/label "諸手当"

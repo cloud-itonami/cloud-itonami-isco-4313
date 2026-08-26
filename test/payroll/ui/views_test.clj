@@ -3,13 +3,18 @@
             [clojure.test :refer [deftest is testing]]
             [payroll.artifact.bank-transfer :as bank]
             [payroll.fixtures :as f]
+            [payroll.juminzei :as juminzei]
             [payroll.mf.import :as mf]
+            [payroll.projection.r2 :as r2]
             [payroll.mf.reconcile :as recon]
+            [payroll.operations :as ops]
             [payroll.ui.a11y :as a11y]
             [payroll.ui.render :as render]
             [payroll.ui.state :as ui]
             [payroll.mf.schema :as mf-schema]
             [payroll.provenance :as prov]
+            [payroll.artifact.zengin :as zengin]
+            [payroll.cutover :as cutover]
             [payroll.ui.views :as views]))
 
 (defn- clean-meisai [] (f/lines {:verdict (f/verdict-for)}))
@@ -20,6 +25,41 @@
         p (f/proposal)]
     (f/lines {:contract* (f/contract {:employment/health-insurance-insured? nil})
               :run p :verdict (f/verdict-for st p) :disposition :hold})))
+
+(def ops-store
+  "The store the report below is built over, with a 住民税 notice REGISTERED
+  in it.
+
+  Registered, and not handed to `ops/report` as an option, because there is no
+  longer an option: `payroll.operations/report` reads the notices off the
+  store itself. It goes in through `payroll.juminzei/register-notice!` rather
+  than by seeding the atom, so this fixture cannot register something the
+  admission layer would have refused."
+  (let [st (f/fresh-store)]
+    (juminzei/register-notice! st {:employer f/employer-id
+                                   :notice f/resident-tax-notice-as-transcribed})
+    st))
+
+(def ops-report
+  "A report with every section populated, including the two the host
+  measures.
+
+  `:store-health` and `:projection-preflight` are supplied here because a
+  screen rendered from a report that has neither only ever exercises the
+  `not-reported` / `not-configured` branches — and those are exactly the
+  branches an operator sees least and can act on least."
+  (ops/report
+   {:store ops-store
+    :employer f/employer-id
+    :store-health {:store/mode :kotobase :store/readable? true
+                   :store/survives-process-restart? true
+                   :store/entries-are-a-floor? false
+                   :store/key-separation :separate
+                   :store/break-kinds []
+                   :store/streams [{:stream :ledger :head "bafk" :entries 2
+                                    :complete? true :broken [] :why nil}]
+                   :store/why "七つの chain すべてを head から末尾まで辿れた"}
+    :projection-preflight (r2/preflight {})}))
 
 (defn- ctx
   "A context with something in every slot, so no view is checked over an
@@ -43,6 +83,13 @@
                        :disposition :hold
                        :verdict {:violations [{:rule :wage-mismatch}]}}]
      :store {:mode :ephemeral}
+     ;; The operations screen renders a REPORT, so the context carries one —
+     ;; without it the accessibility sweep below would only ever walk that
+     ;; view's `報告が無い` branch, and a screen checked over an empty state
+     ;; has nothing to get wrong. `the-operations-screen-...` tests below
+     ;; assert the other direction directly.
+     :operations ops-report
+     :operations-blockers (ops/blockers ops-report)
      :durability {:store/what "MemStore" :store/why "消える"
                   :store/survives-process-restart? false}
      :form {}
@@ -160,17 +207,68 @@
              (count (re-seq #"法定様式ではない" s))))
       (is (every? #(false? (:artifact/statutory? %)) views/artifacts)))))
 
-(deftest the-exports-screen-shows-the-zengin-refusal-and-what-is-missing
+(deftest the-exports-screen-separates-what-was-transcribed-from-what-was-not
+  (testing "the 全銀 section used to be a refusal. It is now an output, and the
+            screen has to keep saying which parts of it are still unverified —
+            an output with no such column reads as an output that was checked"
+    (let [s (pr-str (views/render :exports (ctx)))]
+      (is (str/includes? s "PayPay銀行"))
+      (is (str/includes? s "Shift_JIS"))
+      (is (str/includes? s (str zengin/record-length " バイト")))
+      (testing "the revision date is read off the namespace, not restated here"
+        (is (str/includes? s (:source/revised zengin/source))))
+      (testing "and the three things still unverified are each named"
+        (is (str/includes? s "テスト振込は行われていない"))
+        (is (str/includes? s "仕様書の本文は終端子を明示していない"))
+        (is (str/includes? s (:discrepancy/what zengin/csv-sample-discrepancy))))
+      (testing "the bank acceptance row is marked unverified and not omitted"
+        (is (str/includes? s "銀行がこのファイルを受理すること"))))))
+
+(deftest the-exports-screen-offers-the-fixed-width-format
   (let [s (pr-str (views/render :exports (ctx)))]
-    (is (str/includes? s "全銀協"))
-    (is (str/includes? s "レコードレイアウト"))))
+    (is (str/includes? s "fixed-width"))
+    (is (some #(= :zengin (:artifact/key %)) views/artifacts))
+    (is (= [:fixed-width :csv :json]
+           (:artifact/formats (first (filter #(= :zengin (:artifact/key %))
+                                             views/artifacts)))))))
 
 (deftest the-import-screen-marks-every-column-unverified
   (let [s (pr-str (views/render :import (ctx)))]
     (is (str/includes? s "一度も読んでいない"))
-    (is (str/includes? s "対応する概念が無い"))
     (is (<= (count mf-schema/columns)
             (count (re-seq #"未検証" s))))))
+
+(deftest the-import-screen-marks-a-column-with-no-counterpart-as-having-none
+  ;; This assertion was DELETED on 2026-08-26 rather than repaired. 住民税 was
+  ;; the only `:mf/no-counterpart` column, `payroll.juminzei` gave it one, the
+  ;; literal stopped appearing, and the line came out — which left the whole
+  ;; `:mf/no-counterpart` rendering branch live and unmeasured.
+  ;;
+  ;; Deleting it was the wrong repair for a reason the CLAUDE.md rule about
+  ;; evidence floors names exactly: a screen that has no such column and a
+  ;; screen that has forgotten how to render one look identical, and the
+  ;; second is how a MoneyForward column carrying a real deduction becomes a
+  ;; blank cell.
+  (testing "today there is NO such column, and that is asserted rather than
+            being the reason the check is absent"
+    (is (empty? mf-schema/no-counterpart-columns))
+    (is (not (str/includes? (pr-str (views/render :import (ctx)))
+                            "対応する概念が無い"))
+        "the marker must not appear when nothing has no counterpart")
+    (is (every? keyword? (map :mf/to mf-schema/columns))
+        "every column maps to a real target"))
+  (testing "and the branch that renders it still works — measured by giving
+            the screen a column that has no counterpart"
+    (with-redefs [mf-schema/columns
+                  (conj (vec mf-schema/columns)
+                        {:mf/column "架空の控除" :mf/to :mf/no-counterpart
+                         :mf/kind :yen :mf/required? false :mf/verified? false
+                         :mf/no-counterpart-why "試験用"})]
+      (let [s (pr-str (views/render :import (ctx)))]
+        (is (str/includes? s "対応する概念が無い"))
+        (is (str/includes? s "架空の控除"))
+        (testing "and it is not conveyed by colour alone"
+          (is (str/includes? s "この actor に対応する概念が無い")))))))
 
 (deftest the-import-screen-shows-a-difference-as-a-difference
   (let [s (pr-str (views/render :import (ctx)))]
@@ -203,6 +301,190 @@
 (deftest an-unknown-view-is-an-error-page-and-not-a-blank-one
   (let [s (pr-str (views/render :no-such-view (ctx)))]
     (is (str/includes? s "その画面は無い"))))
+
+;; ---------------------------------------------------------------------------
+;; 運用の現況
+;; ---------------------------------------------------------------------------
+
+(deftest the-operations-screen-renders-the-same-report-the-api-serves
+  (testing "not a second assembly of the same facts. Every section id in the
+            report has a panel, and the numbers on the screen are the report's
+            own"
+    (let [s (pr-str (views/render :operations (ctx)))]
+      (doseq [{:section/keys [label]} (:report/sections ops-report)]
+        (is (str/includes? s label) label))
+      (testing "住民税 — the registered notice renders its year and its month
+                count, both of which were read off `payroll.juminzei` field
+                names rather than guessed"
+        (is (str/includes? s "架空区"))
+        (is (str/includes? s "\"2026\""))
+        (is (str/includes? s "12 / 12 か月")))
+      (testing "the 源泉徴収税額表 reports its band count next to the digest of
+                the edition they came from"
+        (is (str/includes? s "231"))
+        (is (str/includes? s (get-in (first (filter #(= :rates (:section/id %))
+                                                    (:report/sections ops-report)))
+                                     [:section/withholding-table :table/sha256]))))
+      (testing "and the cutover conditions are the gate's own list"
+        (doseq [c cutover/conditions]
+          (is (str/includes? s (:gate/label c)) (:gate/label c)))))))
+
+(deftest the-operations-screen-offers-the-zengin-download
+  (testing "the exports screen was the only place the fixed-width file could
+            be reached. A screen that says a file exists and cannot hand it
+            over says it twice"
+    (let [s (pr-str (views/render :operations (ctx)))]
+      (is (str/includes? s (str views/export-path "?kind=zengin&format=fixed-width")))
+      (testing "every declared format of every artifact gets its own link —
+                a format is not a rendering of another one"
+        (doseq [a views/artifacts
+                fmt (:artifact/formats a)]
+          (is (str/includes? s (str views/export-path "?kind=" (name (:artifact/key a))
+                                    "&format=" (name fmt)))
+              (str (:artifact/label a) " " fmt))))
+      (testing "and the path is the def the router serves, not a literal"
+        (is (= "/console/export" views/export-path))))))
+
+(deftest the-operations-screen-offers-the-resident-tax-notice-form
+  (testing "this panel used to end with 「この画面にフォームは無い」, and the
+            sentence was true. It is now the opposite claim, and the screen has
+            to carry the form rather than the apology"
+    (let [tree (views/render :operations (ctx))
+          s (pr-str tree)]
+      (is (not (str/includes? s "この画面にフォームは無い")))
+      (is (str/includes? s "この通知を登録する"))
+      (is (str/includes? s (:registration/why ops/resident-tax-registration)))
+      (is (str/includes? s (:registration/action ops/resident-tax-registration)))
+
+      (testing "it posts to the path the router actually serves, and the path
+                is the def rather than a literal"
+        (is (str/includes? s (str ":action \"" views/notice-path "\"")))
+        (is (str/includes? s ":method \"post\""))
+        (is (= "/console/juminzei-notice" views/notice-path))
+        (testing "and the report names the same path, so an operator reading
+                  the report is told where the form actually is"
+          (is (str/includes? (:registration/path ops/resident-tax-registration)
+                             views/notice-path))))
+
+      (testing "every field of `payroll.juminzei/notice-fields` is on the form
+                with its label — the list of what to transcribe and the boxes
+                to transcribe it into are one list, so a field added to the
+                admission layer cannot become a field nobody can supply"
+        (doseq [fld juminzei/notice-fields]
+          (is (str/includes? s (:field/label fld)) (:field/label fld))))
+
+      (testing "the 通知の種類 select has an EMPTY option and it is first — a
+                select whose first option is 決定通知書 submits 決定通知書 from
+                a form nobody touched, and that is a default with legal
+                consequences"
+        (is (str/includes? s "選択されていない"))
+        (is (str/includes? s "特別徴収税額の決定通知書"))
+        (is (str/includes? s "特別徴収税額の変更通知書"))
+        (is (str/includes? s ":value \"decision\""))
+        (is (str/includes? s ":value \"revision\"")))
+
+      (testing "the twelve 月割額 are twelve labelled controls inside a
+                fieldset with a legend, and not one box with a bare number
+                beside it — a screen reader announces the legend when focus
+                enters the group"
+        (is (str/includes? s ":fieldset"))
+        (is (str/includes? s "月割額（6月から翌年5月までの12か月）"))
+        (doseq [[k m] (map vector juminzei/month-keys juminzei/collection-months)]
+          (is (str/includes? s (str ":name \"" (clojure.core/name k) "\"")) (str k))
+          (is (str/includes? s (str (:month/label m) "の月割額（円）"))
+              (:month/label m))))
+
+      (testing "and the whole screen still passes the accessibility
+                invariants — a form is where a label goes missing"
+        (is (a11y/clean? (a11y/check tree)) (a11y/report (a11y/check tree)))))))
+
+(deftest the-notice-form-keeps-a-refused-transcription-on-the-screen
+  (testing "twelve figures are five minutes of somebody reading off a piece of
+            paper. A refusal that cleared them would teach an operator to
+            write them into a text file first — which is the payroll data this
+            repository spends `payroll.sensitive` keeping out of exactly that
+            kind of place"
+    (let [form {:municipality "架空区" :tax-year "2026"
+                :reference "R8-0000-0000" :revision "0"
+                :registered-at "2026-05-31" :m06 "8200" :m05 "8200"}
+          s (pr-str (views/render :operations (assoc (ctx) :form form)))]
+      (doseq [v ["架空区" "R8-0000-0000" "2026-05-31"]]
+        (is (str/includes? s (str ":value \"" v "\"")) v)))))
+
+(deftest the-notice-form-confirms-by-reading-the-store-back
+  (testing "an echo of the form proves the form was submitted; reading the
+            store back proves it was REGISTERED — and the confirmation still
+            carries no amount, because this is the screen that gets
+            screenshotted into a ticket"
+    (doseq [[q c] views/notice-confirmations]
+      (let [tree (views/render :operations (assoc (ctx) :notice-confirmation c))
+            s (pr-str tree)]
+        (is (str/includes? s (:confirmation/label c)) q)
+        (is (str/includes? s (:confirmation/message c)) q)
+        (testing "with the counts and the coverage read out of the section"
+          (is (str/includes? s "いまこの事業主に登録されている通知は 1 件"))
+          (is (str/includes? s "2026 年度 12 / 12 か月")))
+        (testing "and no 月割額 and no 年税額 anywhere in it"
+          (doseq [amount [(str f/resident-tax) (str (* 12 f/resident-tax))]]
+            (is (not (str/includes? s amount)) (str amount " in " q))))
+        (is (a11y/clean? (a11y/check tree)) q)))
+    (testing "and no banner at all when the request carried no confirmation —
+              a screen that always says 「登録した」 says nothing"
+      (let [s (pr-str (views/render :operations (ctx)))]
+        (doseq [[_ c] views/notice-confirmations]
+          (is (not (str/includes? s (:confirmation/label c)))))))))
+
+(deftest the-operations-screen-separates-a-correction-from-a-second-opinion
+  (testing "a superseded notice is still in the store and is still shown, with
+            the word 差し替えられた on it. A screen that showed only what is in
+            force would show one notice where a municipality sent two, and the
+            employee asking 「なぜ8月と9月で控除額が違うのか」 could not be
+            answered from it"
+    (let [st (f/fresh-store)
+          _ (doseq [n [f/resident-tax-notice-as-transcribed
+                       f/resident-tax-notice-revised-as-transcribed]]
+              (juminzei/register-notice! st {:employer f/employer-id :notice n}))
+          rep (ops/report {:store st :employer f/employer-id})
+          s (pr-str (views/render :operations
+                                  (assoc (ctx)
+                                         :operations rep
+                                         :operations-blockers (ops/blockers rep))))]
+      (is (str/includes? s "差し替えられた（記録として残してある）"))
+      (is (str/includes? s "有効"))
+      (testing "the counts say two registered, one effective, one superseded"
+        (is (str/includes? s "2 件"))
+        (is (str/includes? s "1 件")))
+      (testing "and the correction's 改訂番号 is on the row, so which paper is
+                the later one is legible without opening the store"
+        (is (str/includes? s "\"1\""))))))
+
+(deftest the-operations-screen-shows-the-projection-preflight-without-a-catalog
+  (testing "`not-configured` says this process holds no catalog driver. The
+            preflight says whether one could be configured at all, and the two
+            are different next actions"
+    (let [s (pr-str (views/render :operations (ctx)))]
+      (is (str/includes? s "未設定"))
+      (is (str/includes? s "R2_CATALOG_URI"))
+      (is (str/includes? s "投影を作れる状態か")))))
+
+(deftest an-operations-screen-with-no-report-says-so-rather-than-rendering-blank
+  (testing "a blank screen there is indistinguishable from a deployment with
+            nothing wrong — which is this repository's most-named defect at
+            the point where it would be invisible"
+    (let [empty-ctx (assoc (ctx) :operations nil :operations-blockers nil)
+          tree (views/render :operations empty-ctx)
+          s (pr-str tree)]
+      (is (str/includes? s "画面が空であることは「問題が無い」ではない"))
+      (is (str/includes? s "/api/operations"))
+      (testing "and it is still an accessible screen and not an error"
+        (is (a11y/clean? (a11y/check tree)))))))
+
+(deftest the-operations-screen-carries-no-payroll-amount-and-no-name
+  (testing "this is the surface most likely to be screenshotted into a ticket"
+    (let [s (pr-str (views/render :operations (ctx)))]
+      (doseq [leak [f/worker (:bank/payee-name-kana (f/contract))
+                    (str f/gross) (str f/net)]]
+        (is (not (str/includes? s leak)) leak)))))
 
 ;; ---------------------------------------------------------------------------
 ;; The chip vocabulary
