@@ -31,6 +31,7 @@
   (:require [clojure.test :refer [deftest is testing]]
             [kotoba.labor :as labor]
             [payroll.actor :as actor]
+            [payroll.juminzei :as juminzei]
             [payroll.store :as store]))
 
 (def backends {:mem store/mem-store :datomic store/datomic-store})
@@ -434,3 +435,118 @@
   (testing "and every backend in the map really implements the protocol"
     (doseq [[label make] backends]
       (is (satisfies? store/Store (make)) (str label " must implement Store")))))
+
+;; ---------------------------------------------------------------------------
+;; 住民税 notices — the seventh stream, on the same contract as everything else
+;;
+;; A notice stream that only one backend got right would be discovered the way
+;; every other backend disagreement here would be: on the deployment that has
+;; the durable one, months after the notice was transcribed, by an employee
+;; whose 住民税 line stopped matching the paper they were sent.
+;; ---------------------------------------------------------------------------
+
+(def ^:private decision-notice
+  {:notice/id "emp-jp/架空区/2026/decision/R8-0000-0000/0"
+   :notice/employer "emp-jp"
+   :notice/kind :notice/decision
+   :notice/municipality "架空区"
+   :notice/tax-year "2026"
+   :notice/reference "R8-0000-0000"
+   :notice/revision 0
+   :notice/replaces nil
+   :notice/registered-at "2026-05-31"
+   :notice/annual-total (* 12 8200)
+   :notice/months (into {} (for [k juminzei/month-keys] [k 8200]))})
+
+(def ^:private revision-notice
+  {:notice/id "emp-jp/架空区/2026/revision/R8-0000-0001/1"
+   :notice/employer "emp-jp"
+   :notice/kind :notice/revision
+   :notice/municipality "架空区"
+   :notice/tax-year "2026"
+   :notice/reference "R8-0000-0001"
+   :notice/revision 1
+   :notice/replaces (:notice/id decision-notice)
+   :notice/registered-at "2026-09-30"
+   :notice/annual-total nil
+   :notice/effective-from :juminzei/m10
+   :notice/months (into {} (for [k (drop-while #(not= :juminzei/m10 %)
+                                               juminzei/month-keys)]
+                             [k 9000]))})
+
+(deftest notices-append-in-order-and-are-scoped-to-their-employer
+  (testing "registration order is the correction history: a store that
+            returned the 決定通知書 after the 変更通知書 that replaced it would
+            make the superseded figure look like the current one"
+    (each-backend
+     (fn [st]
+       (store/register-juminzei-notice! st decision-notice)
+       (store/register-juminzei-notice! st revision-notice)
+       (store/register-juminzei-notice!
+        st (assoc decision-notice :notice/employer "emp-2"
+                  :notice/id "emp-2/架空区/2026/decision/R8-0000-0000/0"))
+       (is (= [(:notice/id decision-notice) (:notice/id revision-notice)]
+              (mapv :notice/id (store/juminzei-notices st "emp-jp"))))
+       (testing "one employer's notices are another employer's tax bill"
+         (is (= ["emp-2/架空区/2026/decision/R8-0000-0000/0"]
+                (mapv :notice/id (store/juminzei-notices st "emp-2"))))
+         (is (empty? (store/juminzei-notices st "emp-3"))))
+       (testing "and a nil client-id is nil, never every notice that named
+                 no employer"
+         (is (nil? (store/juminzei-notices st nil))))))))
+
+(deftest a-superseded-notice-is-still-in-the-store
+  (testing "nothing is overwritten. The correction is a new entry naming what
+            it replaces, and what is current is DERIVED — which is what lets
+            the console show what a municipality corrected rather than only
+            what it last said"
+    (each-backend
+     (fn [st]
+       (store/register-juminzei-notice! st decision-notice)
+       (store/register-juminzei-notice! st revision-notice)
+       (let [all (store/juminzei-notices st "emp-jp")]
+         (is (= 2 (count all)))
+         (is (some #(= (:notice/id decision-notice) (:notice/id %)) all)
+             "the replaced notice is still readable")
+         (testing "and the derived effective set is the correction alone"
+           (is (= [(:notice/id revision-notice)]
+                  (mapv :notice/id (juminzei/effective-notices all))))))))))
+
+(deftest the-twelve-months-survive-the-blob-round-trip-byte-for-byte
+  (testing "a backend that dropped one month would not raise anything — it
+            would silently reduce somebody's deduction for that month, and
+            `payroll.juminzei/assess` would answer :month-not-in-notice, which
+            reads as `the municipality never sent that month`"
+    (each-backend
+     (fn [st]
+       (let [uneven (into {} (map-indexed (fn [i k] [k (+ 8000 i)])
+                                          juminzei/month-keys))
+             n (assoc decision-notice
+                      :notice/months uneven
+                      :notice/annual-total (reduce + (vals uneven)))]
+         (store/register-juminzei-notice! st n)
+         (let [back (first (store/juminzei-notices st "emp-jp"))]
+           (is (= n back) "the whole record, not merely the months")
+           (is (= uneven (:notice/months back)))
+           (is (= 12 (count (:notice/months back))))
+           (is (= (mapv uneven juminzei/month-keys)
+                  (mapv (:notice/months back) juminzei/month-keys))
+               "every month, in the collection order, with its own figure")
+           (testing "the keyword keys survive as keywords rather than as
+                     strings — `:juminzei/m06` read back as \"juminzei/m06\"
+                     would make every month absent, which is not zero"
+             (is (every? keyword? (keys (:notice/months back)))))
+           (testing "and nil stays nil: a 変更通知書 has no 年税額, and a
+                     backend that coerced that to 0 would assert the
+                     municipality decided the year came to nothing"
+             (store/register-juminzei-notice! st revision-notice)
+             (let [r (last (store/juminzei-notices st "emp-jp"))]
+               (is (nil? (:notice/annual-total r)))
+               (is (contains? r :notice/annual-total))
+               (is (= :juminzei/m10 (:notice/effective-from r)))))))))))
+
+(deftest an-empty-store-answers-empty-for-notices-too
+  (each-empty-backend
+   (fn [st]
+     (is (empty? (store/juminzei-notices st "emp-jp")))
+     (is (nil? (store/juminzei-notices st nil))))))

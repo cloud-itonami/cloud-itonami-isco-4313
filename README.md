@@ -9,8 +9,9 @@ gate.
 production-verified.** The full column-by-column matrix, and the cutover gate
 that would have to be met before MoneyForward is switched off, are in
 [`docs/maturity.md`](docs/maturity.md) — read that before reading anything
-below as a claim about production. **489 tests / 2,299 assertions green,
-lint clean** (2026-08-25).
+below as a claim about production. **562 tests / 34,111 assertions green;
+`clj-kondo` reports 0 errors and 1 warning** (a pre-existing unused binding
+in `payroll.governor`) — measured 2026-08-26.
 
 PayrollAdvisor ⊣ PayrollGovernor as a langgraph StateGraph
 (`intake → advise → govern → decide → commit/hold`, human-approval
@@ -19,11 +20,19 @@ interrupt), modeled on cloud-itonami-isco-4311's bookkeeping actor.
 per the fleet's capability-library-wrapping convention (same as
 cloud-itonami-isic-9700) — wage arithmetic is never reinvented here.
 
-Around it, as of 2026-08-25: a Japanese **operator console** that ships no
+Around it, as of 2026-08-26: a Japanese **operator console** that ships no
 JavaScript, a **real HTTP host** that refuses to start on a bad deployment,
 four **output artifacts** none of which claims to be a statutory form, and a
 **MoneyForward import boundary** that has never seen a real MoneyForward
 export and says so on every screen it appears on.
+
+Added in this slice: the **源泉徴収税額表（月額表）** as data — all 231
+bands imported out of a SHA-256-pinned 国税庁 workbook rather than typed, with
+the two segments the workbook prints as a *rate* refusing the rounding instead
+of inventing one — and the **three-cycle cutover procedure** that would switch
+MoneyForward off: `payroll.cutover`'s six measured conditions over evidence
+held in **kotobase** and projected to **R2**. Both are described below, and
+neither is deployed.
 
 - [`docs/maturity.md`](docs/maturity.md) — the matrix and the cutover gate
 - [`docs/architecture.md`](docs/architecture.md) — the layering, and the
@@ -316,6 +325,15 @@ recorded no withheld amount. A figure invented here would be the most dangerous
 value in the repository — it would arrive stamped with an article of the Income
 Tax Act and nothing downstream could check it.
 
+**This did not change when the 月額表 landed** (next section). The monthly
+table is a table of what to withhold from one month's pay; the year's tax
+needs 別表第五 and the 所得税額の速算表, and neither has been read.
+`payroll.artifact.gensen/year-end-amount` used to fall through to
+`payroll.rates/withhold` — safe only for as long as that table was empty, and
+it would have started answering the moment the bands landed with nothing in
+the diff to say so. It does not consult the monthly table at all now, and the
+refusal names the two tables it does not have.
+
 ### Nine answers, four of which are the absence of an answer
 
 | answer | commits? |
@@ -413,6 +431,76 @@ would read as a payment of nothing — the worst lie this ledger could tell, tol
 about the op whose whole point is not to invent figures. So the ledger stamp
 carries `:year`, and both read routes carry `:op`.
 
+## 源泉徴収税額表 — 231 bands, imported rather than typed
+
+The previous slice held this table as a **shape with zero rows**, and said so
+loudly: a partially transcribed banded table answers for the salaries somebody
+happened to type and refuses for the rest, which is worse than refusing for all
+of them, because the operator learns to trust it.
+
+That objection is answered by there being no subset. `tools/import_nta_2026.clj`
+**reads** the 国税庁 workbook and writes `src/payroll/rates/monthly_2026.cljc`:
+231 contiguous bands, eight dependant columns each, nine printed threshold
+rows, eleven excess-rate segments and the 7人超 deduction. About 2,000 figures.
+None of them was typed by a human, and none of them is typed in
+`payroll.rates` either — `withholding-table`'s vectors are `identical?` to the
+generated file's, and a test asserts that, so a regeneration cannot leave the
+two disagreeing.
+
+### The digest is the identity; the URL is only an address
+
+国税庁 replaces these workbooks in place when a 告示 is amended. A URL says
+where a file was fetched from, not what was fetched — so the importer pins the
+input by **SHA-256**, refuses a digest mismatch, and writes nothing on one.
+`payroll.rates/sources` reads the URL, the page, the digest and the retrieval
+date **out of** the generated provenance rather than restating them beside it:
+a second copy of a digest is a copy that goes stale silently.
+
+### Two segments still refuse, and they refuse by SEGMENT, not by value
+
+| input | answer |
+|---|---|
+| 甲, 105,000円未満 | `0` — printed for every dependant count, and an ANSWER |
+| 甲/乙, 105,000〜739,999円 | the band's printed amount |
+| 甲, a printed threshold | that row's printed amount (all nine) |
+| 乙, 740,000円 / 1,710,000円 | the two amounts 乙 prints |
+| 甲, above the last printed row | **REFUSED** `:rounding-not-transcribed` |
+| 乙, 105,000円未満 | **REFUSED** `:rounding-not-transcribed` |
+
+Those two are exactly the places the workbook prints a **rate** instead of an
+amount. The arithmetic is fully determined and is returned as
+`:withhold/exact` — an exact ratio, never a double — but the 端数処理 that
+turns it into yen is printed nowhere in what was read, so `withhold` reports
+the arithmetic and refuses the rounding.
+
+**It refuses at 100,000円 too**, where 3.063% is exactly 3,063円 and there is
+no fraction to resolve. Answering the amounts that happen to divide evenly and
+refusing the rest is the same failure as a partial table, one layer down.
+
+### 740,000円 is the first threshold row and not the last band
+
+`:band/to` is 未満. Reading it as 以下 would make 740,000円 both the last band
+and the first threshold, and the two print different amounts (71,380 against
+71,680 at 扶養0人). `lookup-band` compares the upper edge strictly and the
+suite asserts the two never overlap and never leave a gap.
+
+### 扶養親族等 8人以上, and a floor this repository chose
+
+The workbook says: from the 7人 figure, subtract 1,610円 for each person
+beyond seven. It does **not** say what happens when that exceeds the tax. The
+floor at zero is therefore marked in `dependant-adjust`'s docstring as *this
+repository's reading* and not as something printed — a negative 源泉徴収税額
+would be a refund the 月額表 does not provide for.
+
+### What this did NOT do
+
+**No payslip figure changed.** `payroll.meisai` still carries the operator's
+own 所得税 with `:declared` provenance, and nothing on the payslip path was
+rewired to call `withhold`. Holding a table and computing a payroll from it
+are two decisions, and only the first was made here. 日額表 and
+賞与に対する源泉徴収税額の算出率の表 are named in `:table/not-transcribed`
+rather than approximated from this one.
+
 ## 賃金の基礎 — what rule 4 does not check
 
 Rule 4 recomputes `:gross` with `kotoba.labor/wages-for` and holds any
@@ -504,7 +592,7 @@ Two consequences worth stating:
 
 ## The operator console — Japanese, keyboard-operable, and scriptless
 
-`GET /console` and five more screens, server-rendered on
+`GET /console` and six more screens, server-rendered on
 `kotoba-lang/jp-go-digital-design-system` (デジタル庁デザインシステム, this
 workspace's base design system).
 
@@ -512,10 +600,52 @@ workspace's base design system).
 /console            現況 — the deployment, its durability, the legend
 /console/employees  従業員・契約 — registration, coverage, what is missing and what it costs
 /console/run        給与計算 — period input, then the calculation review
-/console/exports    出力物 — the four artifacts, and the 全銀 refusal
+/console/exports    出力物 — the six artifacts, 全銀 総合振込 among them
 /console/mf         MoneyForward 突合
 /console/ledger     監査台帳
+/console/operations 運用の現況 — the whole report, the 未了 list, and the one
+                    form that registers a 住民税 決定通知書
 ```
+
+`/console/operations` renders the SAME `payroll.operations/report` that
+`GET /api/operations` serves — not a second assembly of the same facts. Every
+list on it (the artifacts, the cutover conditions, the 未了 list) comes out of
+that value, and `payroll.edge.console-test` asserts the screen's report is
+`=` to the endpoint's.
+
+It is also the one screen that WRITES a 住民税 決定通知書. `POST
+/console/juminzei-notice` admits a transcribed notice through
+`payroll.juminzei` and persists it on `payroll.store/Store`'s notice stream
+(the seventh kotobase chain), behind the same three gates and the same
+`Origin` check as every other write; the employer comes from the verified
+caller and never from the form. The twelve 月割額 are twelve labelled number
+inputs inside a `<fieldset>`, 通知の種類 has an empty option that is refused
+rather than defaulted, and a blank month is **未登録 and not 零円** — an
+eleven-month 決定通知書 is refused whole.
+
+It is **Post/Redirect/Get, asymmetrically**: `:ok` and `:duplicate` answer
+`303` to `/console/operations?notice=registered|duplicate`, and a REFUSAL does
+not redirect — it re-renders with the reason and every value still in the
+form, because a redirect would throw away twelve figures somebody just read
+off a piece of paper. **Nothing transcribed goes in the redirect target** (a
+query string lands in browser history, in proxy logs and in a screenshot of
+the address bar); the landing page reads the counts and the coverage back out
+of the store instead, and **no amount appears on that screen at all** — not a
+月割額, not the 年税額, not on the confirmation. The figures are on the
+municipality's own paper, and this is the surface most likely to be
+screenshotted into a ticket.
+
+`payroll.operations/report` reads those notices **off the store**. It used to
+take them as an injected `:juminzei-notices` option that nothing outside the
+test suite ever supplied, so the screen and `GET /api/operations` both said
+「決定通知書が一件も登録されていない」 to deployments that had registered
+notices — a section whose whole subject is *absence is not zero* reporting an
+absence it had never looked for. An unreadable notice chain now answers
+`:unreadable` with its reason, and its counts are **nil rather than 0**,
+because a count is the result of counting.
+
+So the console's writes are contracts, timesheets, runs and 住民税の通知, and
+nothing else.
 
 **It ships no JavaScript at all**, which is the exception ADR-2608231200
 records for a page sitting next to live credentials. Everything the
@@ -524,6 +654,76 @@ generated from a table so a screen cannot be added to the dispatch and
 forgotten in the nav — and what is bought is that
 `Content-Security-Policy: default-src 'none'` is truthful rather than
 aspirational.
+
+### Corrections, re-issues, and what an operator cannot undo
+
+A municipality does not always get it right the first time, and it does not
+always keep the figure it first decided: a 特別徴収税額の変更通知書 arrives
+when the tax changes mid-year, and a corrected or re-issued 決定通知書 arrives
+when the first paper was wrong. Both are registered the same way, through the
+same form:
+
+1. **Register the original first.** A correction that names a notice this
+   employer has not registered is refused (`:replacement-not-registered`) —
+   you cannot correct a paper this deployment has never seen.
+2. **Raise 改訂番号.** `0` is a first registration. A correction carries `1`
+   or more.
+3. **Name what it replaces.** A revision with no `:notice/replaces` is refused
+   (`:revision-without-replacement`): a correction that does not say what it
+   corrects just leaves two notices side by side for one tax year, and nobody
+   can then answer which 月割額 to deduct.
+4. **Correct a correction by naming the correction.** Two notices replacing
+   the same notice is refused (`:replacement-already-replaced`), because that
+   forks the history silently and *current* stops having one answer.
+
+**Submitting the same notice twice is not an error and not a second
+registration.** Identical content under the same `notice-id` answers
+`:duplicate`, writes nothing, and the console says so in its own words
+(「同じ通知が既に登録されていた … 再送は二度目の登録ではない」) rather than
+showing a second 「登録した」 banner — two success banners honestly read as two
+notices held. The same id with *different* content is refused
+(`:conflicting-content`) and points at the correction route instead.
+
+`notice-id` is `employer/municipality/tax-year/kind/reference/revision`, which
+is why `:notice/municipality` and `:notice/reference` refuse a value
+containing `/`: without that refusal 「架空区/2」 with reference 「7」 and
+「架空区」 with reference 「2/7」 would produce one id for two different papers.
+
+#### Rollback: nothing is deleted, and that is the trade
+
+**A notice registered in error cannot be erased from the chain. It can only be
+superseded** — by registering the corrected paper with a higher 改訂番号 that
+names the mistaken one. There is no delete, no edit and no route that offers
+either; the stream is append-only in every backend, and in the kotobase one it
+is a chain of sealed, content-addressed blocks whose head moves only by
+compare-and-set.
+
+What *is* recovered is the answer, immediately and without any repair step:
+`payroll.juminzei/effective-notices` derives what is current as *every notice
+no other notice replaces*, so a superseded figure stops governing a month the
+moment its replacement lands. `assess` and `coverage` both read through it, so
+the payslip and the 運用の現況 screen cannot end up saying different things
+about the same August.
+
+**An append-only history is the right trade for a tax record**, for three
+reasons that all cost something the day somebody asks:
+
+- an employee asking 「なぜ8月と9月で控除額が違うのか」 is answered with both
+  papers and the date each was transcribed. A store that had overwritten the
+  first one could only show the second and assert the first never existed
+- the amounts were deducted from real wages and remitted to a real
+  municipality. A record that can be edited is not evidence of what was
+  deducted, only of what somebody last believed
+- `payroll.operations`' report reports the difference — registered, effective,
+  **superseded** — so a correction is visible *as* a correction rather than as
+  a screen that has always looked this way
+
+The failure mode this protects against is the transcription retried against a
+history that could not be read. `register-notice!` reads the employer's
+notices first, and a chain it cannot walk to the end **refuses the
+registration** (`:history-unreadable`) rather than treating the failure as an
+empty history — appending without being able to ask 「これは既に登録されて
+いるか」 is how one paper becomes two entries under one id.
 
 ### State is never conveyed by colour
 
@@ -664,13 +864,57 @@ What is real is the boundary around them:
   reconciled against another's
 - **a parse writes nothing.** Not the file, not a row, not a run
 
-### 住民税 is in the vocabulary and has nowhere to go
+### 住民税 has a counterpart now, and this actor still computes none of it
 
-MoneyForward withholds it. **This actor has no rule, no payslip line and no
-account for it**, and 地方税法 第三百二十一条の五 is unread. It is mapped to
-`:mf/no-counterpart` rather than dropped, and a file where it carries a
-non-zero value **cannot reconcile** — because that is not a discrepancy in a
-figure, it is a deduction one system makes and the other cannot.
+MoneyForward withholds it, and the column maps to `:resident-tax-withheld`
+rather than to `:mf/no-counterpart` — so it is compared field by field like
+every other deduction, and `payroll.mf.schema/no-counterpart-columns` is now
+**empty**. That mattered beyond the import: the cutover gate's third condition
+is *no `:mf/no-counterpart` column carried a value*, and while 住民税 had no
+counterpart the gate was **unmeetable by construction**, because every real
+export carries the column.
+
+**What is still true is the part worth keeping.** This actor computes no
+住民税 at all. 「所得税と違い、税額の計算をする手間がありません」 is the
+sentence the whole design is built on: the municipality decides the amount,
+prints it on a 特別徴収税額の決定通知書 and sends it to the employer, and
+this actor's only jobs are to hold it, hand out the right month's figure and
+refuse when there is no notice. There is no rate here, no table and no
+arithmetic that produces a tax. The reading behind it is the 東京都・都内
+区市町村「特別徴収の事務手引き」(令和８年１月) — a **municipal guide and not
+the statute**; 地方税法's own text has not been retrieved from e-Gov the way
+`payroll.shakai-hoken`'s four articles were, and `payroll.juminzei/source`
+says so in `:source/limit`.
+
+**What is now durable.** A transcribed notice is admitted by
+`payroll.juminzei/admit-registration` and persisted by `register-notice!` on
+`payroll.store/Store`'s notice stream — the **seventh** CAS-guarded kotobase
+chain, employer-scoped and append-only. There is a payslip line (`payroll.meisai`'s
+sixth deduction line, 住民税（特別徴収）) whose figure comes from
+`payroll.juminzei/assess`, and it is `:declared` and never `:derived`: the
+amount is the municipality's, not this repository's.
+
+**That seam is now joined** (2026-08-26). The payslip line reads
+`:employment/resident-tax-obligation` off the contract to decide whether this
+employee is under 特別徴収 at all, and that key is one of
+`payroll.touroku/contract-fields`: the contract form carries a select, a
+contract classified `:special-collection` whose notice covers the month
+produces a figure, and its amount is the 月割額 printed on that paper with the
+municipality named as its source. **Registered is not the same as classified**
+— the select's first option is 未登録 and it does not default to 特別徴収,
+because an employee nobody has classified is not 対象外 either. `assess`
+answers `:municipality-not-declared` for one, the line stays held, and
+`payroll.touroku/registration-gaps` names it so somebody can classify them.
+Nothing here has been deployed or verified in production.
+
+**A month nobody registered is `:unknown`, never zero.** `payroll.meisai/payable?`
+refuses such a run, so no bank file can be built for it — the enforcement is
+at the payment boundary and **not** in the governor, deliberately: a governor
+rule would hold every run of every employer who handles 特別徴収 outside this
+system, which is a lawful arrangement. In a reconciliation, a MoneyForward
+figure this actor never assessed is `:not-comparable` and one for an employee
+registered as 普通徴収 is `:only-in-mf`. Neither is scored as agreement, and
+neither is a blocker that can never be cleared.
 
 ### Five verdicts, and only one of them is a pass
 
@@ -687,6 +931,85 @@ evidence floor: **at least one run was compared.** A report over an empty
 import has no differences to show and would otherwise print exactly like a
 perfect month.
 
+## Kotobase, R2 and the three cycles — the procedure that switches MoneyForward off
+
+`docs/maturity.md` asked for *three consecutive reconciled pay cycles, at
+least one of which is not an ordinary month* long before anything could hold
+the evidence. A gate whose evidence is not kept is a gate somebody satisfies
+from memory — the reconciliation was rendered on a screen and discarded, and
+the next person to ask *did we actually do three?* had nothing to read.
+
+`payroll.cutover` is that gate, and it reads evidence out of two places that
+must both answer: the **kotobase** store and the **R2** projection.
+
+### The three parts, and what each is for
+
+| part | namespace | what it holds | what it cannot do |
+|---|---|---|---|
+| **MF 突合** | `payroll.mf.import` / `.reconcile` | the comparison itself — every field of every mapped run, agreeing ones included | never seen a real MoneyForward export; every column name is a conjecture and `:mf/verified?` is `false` on all of them |
+| **kotobase** | `payroll.store.kotobase` | the durable record of each cycle: seven CAS-guarded chains, payload sealed, node readable | ships no transport that reaches a network |
+| **R2** | `payroll.projection.catalog` / `.r2` | the analysis-side copy, appended idempotently by `cycle_id` and read back | `create_table` returns **401** — the token needs R2 *storage* write as well as catalog write |
+
+### The procedure, in the order an operator performs it
+
+Once per pay cycle, three cycles running:
+
+1. **Run payroll here** and commit it, so this actor holds runs for the
+   period. A cycle admitted from a period this actor computed nothing for
+   reconciles to `:not-comparable`, which is deliberately not a pass.
+2. **Paste the MoneyForward export** into `/console/mf`. The file is not
+   stored. `reconcile` compares every field of every run it could map by a
+   **registered employee number** — never by name.
+3. **Admit the cycle** with `payroll.cutover/record-cycle!`, supplying the
+   report, an approver, a timestamp, the snapshot ids of both sides, and the
+   month kind. `:cycle/reconciled?` is **copied out of the report and is
+   never an argument** — that is the one field somebody would otherwise be
+   able to set. A report that compared zero runs is refused.
+4. **Classify the month, with a reason.** `:ordinary` or `:exceptional`, and
+   an `:exceptional` with no reason is refused. At least one of the three
+   must be exceptional, because `payroll.chingin` shows a monthly contract's
+   gross is the contracted rate and the timesheets are never read — right in
+   an ordinary month, wrong in a month with a mid-month start, a leaver or
+   unpaid leave. **Two ordinary months agree and prove nothing about the
+   third.**
+5. **Project the cycles to R2** and verify by READ-BACK, not by the append's
+   own answer — a driver reporting success against a catalog that stored
+   nothing looks exactly like a driver that worked.
+
+Then `payroll.cutover/evaluate` answers, and `GET /api/operations` reports it
+alongside every other section an operator has to work down.
+
+### Six conditions, and not one of them is a boolean somebody passes in
+
+1. three **consecutive** reconciled cycles — a gap or a repeat in the periods
+   resets the run, so `:cutover/progress` reads *how far along am I now* and
+   not *how many good months have I ever had*
+2. at least one `:exceptional`, with a reason
+3. zero `:mf/no-counterpart` and zero unknown columns **carrying a value**
+4. the evidence is in a store that implements `payroll.store/Durable` **and**
+   whose transport claims to outlive the process
+5. that store **read the cycles back** — re-read, not taken from the caller's
+   hand
+6. the **R2 projection** read them back
+
+4 is separate from 5 because a `MemStore` passes 5 trivially: it reads back
+perfectly, right up until the process ends. Before those two existed, a
+`MemStore` holding three good cycles made this function answer `passed` — and
+the entire evidence for switching off the incumbent payroll system would have
+been inside a process, with the first restart the moment the employer
+discovered there was no record the parallel run ever happened.
+
+`evaluate` accepts no argument that makes it true. Taking a health map from
+the caller was the alternative and was rejected: the caller assembling that
+map is the caller who wants the gate to pass.
+
+### Where it stands
+
+**Zero cycles have been recorded from a real export.** The gate reads `0/3`,
+condition 4 fails because no kotobase transport is configured, and condition
+6 fails on the 401 above. All three are reported as named blockers rather
+than as a single red light, because they are three different people's work.
+
 ## Two backends, and a contract test that cannot degrade to one
 
 `MemStore` keeps the payroll ledger for exactly as long as the process lives.
@@ -702,11 +1025,12 @@ out of one `backends` map, with an evidence floor asserting that map still holds
 two distinct types. A contract test that silently degrades to one backend passes
 forever.
 
-Three streams are seq-keyed and append-only, not two. **Timesheets are the
-third**, and they are the one the siblings do not have: they are the only
-admissible basis for an hourly wage, so a backend that lost one would not raise
-anything — it would compute a different lawful-looking wage, and the governor
-would then hold the *honest* proposal for `:wage-mismatch`.
+Five streams are seq-keyed and append-only, not two: timesheets, records, the
+ledger, the cutover cycles and the 住民税 notices. **Timesheets are the one the
+siblings do not have**, and they are the only admissible basis for an hourly
+wage, so a backend that lost one would not raise anything — it would compute a
+different lawful-looking wage, and the governor would then hold the *honest*
+proposal for `:wage-mismatch`.
 
 **Measured 2026-08-18.** Three mutations break the durable backend ALONE:
 
@@ -719,7 +1043,7 @@ would then hold the *honest* proposal for `:wage-mismatch`.
 In each case the 33 pre-existing tests stay green, which is exactly the state
 the contract test exists to end.
 
-## The HTTP surface — five API routes, plus the console
+## The HTTP surface — six API routes, plus the console
 
 `src/payroll/edge/endpoints.cljc`, portable `.cljc`, `{:status n :body {...}}`
 in and out, no host effects and no framework. `payroll.host.jvm` mounts it,
@@ -735,6 +1059,8 @@ POST /api/handoff                   what the ledger actor answered about
                                     runs this employer submitted
 POST /api/year-end-adjustment       is a 年末調整 owed for one employee and
                                     one year, and what can be computed
+GET  /api/operations                運用の現況 — every section an operator
+                                    works down, and the flat blocker list
 ```
 
 **`:disburse-wages` has no HTTP representation and will not get one.** It is in
@@ -785,9 +1111,12 @@ that namespace. What has not changed is what the host does NOT do — it
 verifies no signature, and `payroll.host.config` refuses to start a
 deployment where that would be unsafe.
 
-Mutation coverage for this surface lives in `tools/mutations.edn`, whose header
-states what the table does and does **not** cover — a clean run means "every
-invariant listed there is measured", never "this actor is measured".
+Mutation coverage for this surface lives in `tools/mutations.edn` — **94
+entries**, measured by parsing the file as EDN (94 distinct `:id`s), 13 of them
+added in this slice for the durable store, the projection and the 全銀 bytes.
+Its header states what the table does and does **not** cover, and `docs/maturity.md`
+names what is still uncovered: a clean run means "every invariant listed there
+is measured", never "this actor is measured".
 
 ## Zero `:local/root`
 

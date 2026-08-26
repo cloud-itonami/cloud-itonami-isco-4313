@@ -53,7 +53,14 @@
    :employees-pension-withheld
    {:remit/to "実施機関（日本年金機構）" :remit/provision "厚生年金保険法 第八十二条第二項"}
    :employment-insurance-withheld
-   {:remit/to "国（労働保険）" :remit/provision "労働保険徴収法 第三十一条第三項"}})
+   {:remit/to "国（労働保険）" :remit/provision "労働保険徴収法 第三十一条第三項"}
+   ;; 住民税 is the one owed to a MUNICIPALITY rather than to the state or an
+   ;; insurer, which is why it cannot be summed with the others: 「区市町村ごと
+   ;; にとりまとめ、区市町村から送付される納入書で納入します」. The
+   ;; per-municipality split is `payroll.juminzei/municipality-payable`.
+   :resident-tax-withheld
+   {:remit/to "従業員の住所地の区市町村（区市町村ごとに納入）"
+    :remit/provision "地方税法 第三百二十一条の五（東京都の手引きが引く条文）"}})
 
 (def labels
   (into {} (map (juxt :line/key :line/label)) meisai/deduction-lines))

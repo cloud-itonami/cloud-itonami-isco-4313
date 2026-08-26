@@ -10,6 +10,7 @@
   | variable | absent | why |
   |---|---|---|
   | `PAYROLL_STORE` | REFUSE | `payroll.edge.endpoints/store-mode` already refuses to guess a backend; an empty in-process store would blame the operator for a deployment fault |
+  | `PAYROLL_KOTOBASE_*` / `PAYROLL_ENCRYPTION` | REFUSE **in durable mode only** | see below |
   | `PAYROLL_ALLOWLIST` | REFUSE | an absent allow-list must never be an open payroll endpoint |
   | `PAYROLL_AUTH` | REFUSE | see below — there is no safe default for how a caller is identified |
   | `PAYROLL_PORT` | REFUSE | a payroll surface should not appear on a port nobody chose |
@@ -40,20 +41,48 @@
   for a legitimate reason (a container's network) without noticing that they
   also removed the only thing making the header trustworthy.
 
+  ## `PAYROLL_STORE=kotobase` fails closed on five things, not one
+
+  The durable backend needs an endpoint, a tenant identity, a scoped auth
+  provider, an encryption provider and a compare-and-set head. **None of them
+  has a default and none of them is guessed**, because each absence produces
+  a different silent wrong:
+
+  | absent | what happens if it is defaulted |
+  |---|---|
+  | endpoint | the store talks to nothing and reports an empty ledger, which reads as `this employer has filed nothing` |
+  | tenant | two deployments on one node share a key space and one employer's ledger appears in another's console |
+  | scoped auth | the credential is either absent (nothing works) or ambient (everything does) |
+  | encryption | **the payroll ledger is written in the clear** — the one failure nobody sees until somebody else reads the store |
+  | CAS | the head is last-write-wins, so of two runs committed at once one leaves no record at all |
+
+  This function reads only the NAMES of the auth and encryption providers
+  (`PAYROLL_KOTOBASE_AUTH`, `PAYROLL_ENCRYPTION`). It never reads a token and
+  never puts one in its own output — `payroll.host.config-test` asserts that
+  by putting a recognisable secret in the environment and scanning the whole
+  configuration for it.
+
   ## Durability is reported, not claimed
 
-  `durability` answers `does what this process accepts survive the process`,
-  and for BOTH store modes today the answer is **no**. `PAYROLL_STORE=datomic`
+  `durability` answers `does what this process accepts survive the process`.
+  For `:ephemeral` and `:datomic` the answer is **no** — `PAYROLL_STORE=datomic`
   selects `payroll.store/datomic-store`, whose own docstring says in-process
-  is the default and not the guarantee: with langchain.db's default
-  in-process DataScript it survives no longer than `MemStore` does.
+  is the default and not the guarantee.
+
+  For `:kotobase` the answer is **the transport's**, and this function will
+  not answer it on the transport's behalf. `payroll.store.kotobase` measures
+  that a second store reconstructs the same records from the same transport;
+  whether the bytes are still there tomorrow is a fact about the node, so
+  `durability` takes the transport's own `:transport/durable?` and reports
+  FALSE when it is absent. A transport that forgot to say is not durable.
 
   Saying so is the whole of this function. The console renders it, the health
   endpoint serves it, and `payroll.host.jvm-test` asserts it by actually
-  restarting: the claim is checked against a measurement rather than being a
-  sentence somebody keeps up to date."
+  restarting — in both directions: the two ephemeral modes lose the ledger,
+  and the kotobase mode reconstructs it."
   (:require [clojure.string :as str]
-            [payroll.edge.endpoints :as api]))
+            [payroll.edge.endpoints :as api]
+            [payroll.projection.r2 :as r2]))
 
 (def loopback-addresses
   "Addresses that reach only this machine. `localhost` is included because a
@@ -76,13 +105,7 @@
   (cond-> {:config/status :refused :config/why why}
     hint (assoc :config/hint hint)))
 
-(defn durability
-  "What `mode` actually guarantees. Truthful for both values it accepts.
-
-  There is no `:store/durable? true` branch and there is no code that
-  produces one. When a backend that survives a restart is actually wired,
-  this function changes and the test that restarts a host changes with it —
-  which is the point of the test existing before the backend does."
+(defn- durability-legacy
   [mode]
   (case mode
     :ephemeral
@@ -109,6 +132,42 @@
      :store/survives-process-restart? false
      :store/what "未設定"
      :store/why "保存先が設定されていない"}))
+
+(defn durability
+  "What `mode` actually guarantees.
+
+  Three-armed now, and the third arm is the one this repository spent its
+  whole history not having. It is still not a `true` this function decides:
+  `transport-durable?` comes from the injected transport's own `describe`,
+  and absent it the answer is no.
+
+  Called with one argument by everything that has only a mode; the host calls
+  it again with the transport's answer once it has a store, which is the only
+  moment either fact is known."
+  ([mode] (durability mode {}))
+  ([mode {:keys [transport-durable? transport reconstructs?]}]
+   (case mode
+     :kotobase
+     {:store/mode :kotobase
+      :store/survives-process-restart? (true? transport-durable?)
+      :store/what "payroll.store.kotobase/KotobaseStore — kotobase の block/ref 面"
+      :store/reconstructs? (boolean reconstructs?)
+      :store/transport transport
+      :store/why
+      (if (true? transport-durable?)
+        (str "注入された transport が耐久性を宣言している。"
+             "store は head から chain を辿って記録を再構成する"
+             "（payroll.store.kotobase/reconstruct）。"
+             "ただし『この配備が実際の node に対して動いた』という主張ではない —— "
+             "それは deploy の証拠であって、設定の証拠ではない")
+        (str "注入された transport が :transport/durable? true を宣言していない。"
+             "store の再構成は測定済みだが、"
+             "bytes が明日も在るかどうかは transport の性質であり、"
+             "store はそれを代わりに主張しない"
+             "（宣言し忘れた transport は耐久ではない）"))}
+
+     (durability-legacy mode))))
+
 
 (def security-headers
   "Response headers this host always sends.
@@ -147,6 +206,73 @@
       (let [n #?(:clj (parse-long t) :cljs (js/parseInt t 10))]
         (when (and (not (neg? n)) (< n 65536)) n)))))
 
+(def durable-requirements
+  "What `PAYROLL_STORE=kotobase` additionally demands, in the order an
+  operator fixes them.
+
+  `:requirement/reads-a-secret? false` on every row and there is no row where
+  it is true — this configuration reads the NAME of a provider, never a
+  credential. `payroll.host.config-test` puts a recognisable token in the
+  environment and asserts it appears nowhere in the returned configuration."
+  [{:requirement/env "PAYROLL_KOTOBASE_ENDPOINT"
+    :requirement/label "kotobase エンドポイント"
+    :requirement/reads-a-secret? false
+    :requirement/why (str "指していない store は空の台帳を返し、"
+                          "それは「この事業主は何も届け出ていない」と"
+                          "同じ顔をする")}
+   {:requirement/env "PAYROLL_KOTOBASE_TENANT"
+    :requirement/label "テナント識別子"
+    :requirement/reads-a-secret? false
+    :requirement/why (str "すべての ref と block に載る。"
+                          "無ければ同じ node 上の別配備と鍵空間を共有する")}
+   {:requirement/env "PAYROLL_KOTOBASE_AUTH"
+    :requirement/label "scope を絞った認証プロバイダの名前"
+    :requirement/reads-a-secret? false
+    :requirement/why (str "資格そのものではなく、"
+                          "どこから資格を取るかの名前を配備が述べる"
+                          "（例: keychain:payroll-kotobase）。"
+                          "この process は値を読まない")}
+   {:requirement/env "PAYROLL_ENCRYPTION"
+    :requirement/label "暗号化プロバイダの名前"
+    :requirement/reads-a-secret? false
+    :requirement/why (str "給与の台帳を平文で書かない。"
+                          "既定が無いのは、既定があれば"
+                          "「設定し忘れ」が「平文で書く」になるからである")}
+   {:requirement/env "PAYROLL_BLIND_INDEX"
+    :requirement/label "鍵付き blind index プロバイダの名前"
+    :requirement/reads-a-secret? false
+    :requirement/why (str "冪等性の tag は node 上に平文で載る。"
+                          "鍵の無いハッシュでは、契約 ID を当てられる者が"
+                          "封緘を一つも開けずに在籍を確認できる。"
+                          "PAYROLL_ENCRYPTION と同じ名前を指してはならない —— "
+                          "blind index の鍵は回転できず"
+                          "（回すと過去の書き込みを見分けられなくなる）、"
+                          "tag は平文で晒され続けるので、"
+                          "封筒の鍵とは脅威も寿命も違う")}
+   {:requirement/env "PAYROLL_KOTOBASE_CAS"
+    :requirement/label "head が compare-and-set であることの明示"
+    :requirement/reads-a-secret? false
+    :requirement/expects "yes"
+    :requirement/why (str "last-write-wins の head では、"
+                          "同時に走った二つの run のうち一方が"
+                          "何の記録も残さずに消える。"
+                          "transport がそうでないなら、"
+                          "そう宣言できないはずである")}])
+
+(defn durable-gaps
+  "Which durable requirements this environment does not meet.
+
+  `PAYROLL_KOTOBASE_CAS` must be exactly `yes`: a variable set to `true`,
+  `1` or the name of a transport is an operator answering a different
+  question, and this one is an acknowledgement rather than a value."
+  [env]
+  (let [get* (fn [k] (some-> (get env k) str str/trim not-empty))]
+    (vec (for [r durable-requirements
+               :let [v (get* (:requirement/env r))
+                     expect (:requirement/expects r)]
+               :when (or (nil? v) (and expect (not= expect v)))]
+           r))))
+
 (defn read-config
   "An environment map → `{:config/status :ok …}` or `{:config/status :refused
   :config/why …}`.
@@ -168,9 +294,42 @@
     (cond
       (nil? mode)
       (refuse "PAYROLL_STORE が設定されていないか、認識できない値である"
-              (str "PAYROLL_STORE=datomic（langchain.db backend）または "
+              (str "PAYROLL_STORE=kotobase（durable。transport の注入が要る）、"
+                   "PAYROLL_STORE=datomic（langchain.db backend）または "
                    "PAYROLL_STORE=ephemeral（保存しない煙テスト）。"
                    "誤字は黙って保存先を選ばない"))
+
+      ;; Checked BEFORE the allow-list, and that order is deliberate: an
+      ;; operator who set the durable mode and none of what it needs has a
+      ;; deployment that would otherwise start, accept payroll runs, and
+      ;; write them into a store that either does not exist or is not
+      ;; encrypted. Everything below this line is about who may call; this is
+      ;; about whether what they file is kept at all.
+      (and (= :kotobase mode)
+           (let [e (get* "PAYROLL_ENCRYPTION")
+                 b (get* "PAYROLL_BLIND_INDEX")]
+             (and e b (= e b))))
+      (refuse (str "PAYROLL_ENCRYPTION と PAYROLL_BLIND_INDEX が"
+                   "同じプロバイダ " (pr-str (get* "PAYROLL_ENCRYPTION"))
+                   " を指している")
+              (str "封筒の鍵と blind index の鍵は別でなければならない。"
+                   "blind index の鍵は回転できない —— "
+                   "回した瞬間に過去の書き込みの tag と一致しなくなり、"
+                   "再送された :commit が二度目の支払いになる。"
+                   "一方 tag は node 上に平文で載り続けるので"
+                   "オフラインで攻撃され続ける。"
+                   "寿命も晒され方も違う二つの事実を、一つの秘密にしない"))
+
+      (and (= :kotobase mode) (seq (durable-gaps env)))
+      (let [gaps (durable-gaps env)]
+        (refuse (str "PAYROLL_STORE=kotobase だが、durable 配備に要る設定が"
+                     (count gaps) " 件足りない: "
+                     (str/join "、" (map :requirement/env gaps)))
+                (str/join "。"
+                          (for [g gaps]
+                            (str (:requirement/env g) "（"
+                                 (:requirement/label g) "）: "
+                                 (:requirement/why g))))))
 
       (nil? allowlist)
       (refuse "PAYROLL_ALLOWLIST が設定されていない"
@@ -213,7 +372,37 @@
        :config/port port
        :config/loopback? loopback?
        :config/trust-forwarded? forwarded-ack?
+       ;; The transport is INJECTED and this function has never seen it, so
+       ;; the durability reported here is the conservative one. The host
+       ;; recomputes it from the store it actually built — see
+       ;; `payroll.host.jvm/start!`.
        :config/durability (durability mode)
+       :config/durable-requirements (when (= :kotobase mode) durable-requirements)
+       ;; Whether this deployment's ENVIRONMENT could build the analytical
+       ;; projection. It makes no request and reads no token —
+       ;; `payroll.projection.r2/read-config` reports the NAME a deployment
+       ;; gave and never the value, which is what makes this safe to print on
+       ;; a screen and into `GET /api/operations`.
+       ;;
+       ;; Computed here rather than in the host because this is the namespace
+       ;; that reads the environment; `payroll.host.jvm` owns lifetimes and
+       ;; sockets and has no business parsing variables. It is the third
+       ;; distinguishable state the operations report needs: `not-configured`
+       ;; says this process holds no catalog driver, and this says whether one
+       ;; could be configured at all.
+       :config/projection-preflight (r2/preflight env)
+       :config/kotobase (when (= :kotobase mode)
+                          {:kotobase/endpoint (get* "PAYROLL_KOTOBASE_ENDPOINT")
+                           :kotobase/tenant (get* "PAYROLL_KOTOBASE_TENANT")
+                           ;; the NAME of the provider, never its value.
+                           :kotobase/auth-provider (get* "PAYROLL_KOTOBASE_AUTH")
+                           :kotobase/encryption-provider (get* "PAYROLL_ENCRYPTION")
+                           :kotobase/blind-index-provider (get* "PAYROLL_BLIND_INDEX")
+                           ;; checked above: read-config refuses when the two
+                           ;; provider names are equal, so reaching here means
+                           ;; the deployment named two different things.
+                           :kotobase/keys-are-separate? true
+                           :kotobase/cas-acknowledged? true})
        :config/headers security-headers})))
 
 (defn health

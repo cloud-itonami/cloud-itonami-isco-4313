@@ -55,24 +55,42 @@
   different part of the verdict."
   [{:line/key :income-tax-withheld
     :line/label "所得税（源泉徴収）"
+    :line/kind :income-tax
     :line/scheme nil
     :line/provision "所得税法 第百八十三条第一項"}
    {:line/key :health-insurance-withheld
     :line/label "健康保険料"
+    :line/kind :social-insurance
     :line/scheme :scheme/health-insurance
     :line/provision "健康保険法 第百六十七条第一項"}
    {:line/key :care-insurance-withheld
     :line/label "介護保険料"
+    :line/kind :social-insurance
     :line/scheme :scheme/long-term-care-insurance
     :line/provision "健康保険法 第百六十七条第一項"}
    {:line/key :employees-pension-withheld
     :line/label "厚生年金保険料"
+    :line/kind :social-insurance
     :line/scheme :scheme/employees-pension
     :line/provision "厚生年金保険法 第八十四条第一項"}
    {:line/key :employment-insurance-withheld
     :line/label "雇用保険料"
+    :line/kind :social-insurance
     :line/scheme :scheme/employment-insurance
-    :line/provision "労働保険徴収法 第三十二条第一項"}])
+    :line/provision "労働保険徴収法 第三十二条第一項"}
+   ;; 住民税 is SIXTH and is not a social-insurance scheme and not a tax this
+   ;; actor computes. It is here because until it was, the MoneyForward
+   ;; boundary mapped its column to `:mf/no-counterpart` and BLOCKED every
+   ;; reconciliation carrying a value — which made `docs/maturity.md`'s G1
+   ;; unmeetable by construction (its own sixth condition said so).
+   ;;
+   ;; The figure comes from `payroll.juminzei`, which reads a municipality's
+   ;; 決定通知書 and computes nothing.
+   {:line/key :resident-tax-withheld
+    :line/label "住民税（特別徴収）"
+    :line/kind :resident-tax
+    :line/scheme nil
+    :line/provision "地方税法 第三百二十一条の五（東京都の手引きが引く条文）"}])
 
 (defn- income-tax-figure
   "The withheld income tax, as a figure.
@@ -171,19 +189,60 @@
                    (str "。登録が要る: " (pr-str (:scheme/missing report))))
                  (:scheme/provision report)))))
 
+(defn- resident-tax-figure
+  "住民税, from `payroll.juminzei/assess` — or `:unknown` when nobody asked it.
+
+  The absent case is `:unknown` and NOT `:not-applicable`, which is the
+  distinction this whole namespace is built on: a run for which no
+  municipality notice was consulted is a run with an unanswered question
+  about a lawful deduction, not a run in which no 住民税 arises. `payable?`
+  therefore refuses it, which is the enforcement — an operator cannot build
+  a bank file for a month whose 住民税 nobody looked at.
+
+  There is deliberately NO governor rule for 住民税 in this change. The
+  governor's rules are about what a run may COMMIT, and adding one would
+  hold every run for every employer whose 住民税 is handled outside this
+  system — which `docs/maturity.md`'s G5 says is a lawful arrangement. The
+  refusal is at the payment boundary instead, where it costs nothing to be
+  wrong about an employer who never wanted the line."
+  [{:line/keys [label provision]} assessment]
+  (cond
+    (nil? assessment)
+    (prov/unknown label
+                  (str "この run について住民税の評価に到達していない。"
+                       "特別徴収税額の決定通知書が登録されていれば、"
+                       "その月割額がここに入る。"
+                       "未評価は「住民税が無い」ではない")
+                  provision)
+
+    (= :notified (:juminzei/answer assessment))
+    (prov/declared label (:juminzei/amount assessment)
+                   (str (:juminzei/municipality assessment) " 特別徴収税額通知")
+                   (:juminzei/why assessment))
+
+    (= :no-obligation-registered (:juminzei/answer assessment))
+    (prov/not-applicable label (:juminzei/why assessment) provision)
+
+    :else
+    (prov/held label (:juminzei/why assessment) provision)))
+
 (defn deductions
-  "The five deduction lines as `[{:line/… :line/figure f} …]`, in payslip
+  "The six deduction lines as `[{:line/… :line/figure f} …]`, in payslip
   order.
 
-  `social-insurance` is the verdict's `:social-insurance` assessment and
-  `withholding` its `[:tax :withholding]`. Passing them in rather than
-  recomputing is the point — see the namespace docstring."
-  [run {:keys [social-insurance withholding]}]
+  `social-insurance` is the verdict's `:social-insurance` assessment,
+  `withholding` its `[:tax :withholding]`, and `juminzei` a
+  `payroll.juminzei/assess` result. Passing them in rather than recomputing
+  is the point — see the namespace docstring."
+  [run {:keys [social-insurance withholding juminzei]}]
   (vec (for [line deduction-lines]
          (assoc line :line/figure
-                (if-let [scheme (:line/scheme line)]
+                (case (:line/kind line)
+                  :social-insurance
                   (scheme-figure line (get-in social-insurance
-                                              [:shakai-hoken/schemes scheme]))
+                                              [:shakai-hoken/schemes
+                                               (:line/scheme line)]))
+                  :resident-tax (resident-tax-figure line juminzei)
                   (income-tax-figure run withholding))))))
 
 (defn- net-figure
@@ -236,12 +295,17 @@
      :meisai/disposition      as given
      :meisai/coverage         `payroll.artifact.text/coverage`-shaped counts
      :meisai/figures          every figure, flat, for the coverage floor}"
-  [{:keys [contract timesheets run verdict disposition]}]
+  [{:keys [contract timesheets run verdict disposition juminzei]}]
   (let [basis (chingin/assess {:contract contract :timesheets timesheets})
         gross (chingin/gross-figure basis (:gross run)
                                     {:derived prov/derived :held prov/held})
         ded (deductions run {:social-insurance (:social-insurance verdict)
-                             :withholding (get-in verdict [:tax :withholding])})
+                             :withholding (get-in verdict [:tax :withholding])
+                             ;; explicit argument first, then the verdict's —
+                             ;; the governor does not evaluate 住民税 today
+                             ;; and a caller that HAS the assessment must be
+                             ;; able to hand it over.
+                             :juminzei (or juminzei (:juminzei verdict))})
         ded-figs (mapv :line/figure ded)
         ded-total (prov/total-figure "控除合計" ded-figs "明細の控除行の合計")
         net (net-figure gross ded-figs (:net run))

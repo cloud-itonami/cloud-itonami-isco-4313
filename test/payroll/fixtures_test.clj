@@ -95,7 +95,7 @@
             rather than somewhere confusing"
     (is (= f/deduction-total
            (+ f/income-tax f/health-insurance f/care-insurance
-              f/employees-pension f/employment-insurance)))
+              f/employees-pension f/employment-insurance f/resident-tax)))
     (is (= f/net (- f/gross f/deduction-total)))))
 
 (deftest no-fixture-file-contains-a-japanese-personal-name-pattern

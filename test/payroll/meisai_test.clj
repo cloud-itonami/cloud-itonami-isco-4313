@@ -138,5 +138,22 @@
             runtimes"
     (is (= [:income-tax-withheld :health-insurance-withheld
             :care-insurance-withheld :employees-pension-withheld
-            :employment-insurance-withheld]
-           (mapv :line/key meisai/deduction-lines)))))
+            :employment-insurance-withheld :resident-tax-withheld]
+           (mapv :line/key meisai/deduction-lines))))
+  (testing "住民税 is last and is neither a social-insurance scheme nor a tax
+            this actor computes — it is a registered municipality notice"
+    (let [l (last meisai/deduction-lines)]
+      (is (= :resident-tax (:line/kind l)))
+      (is (nil? (:line/scheme l))))))
+
+(deftest an-unassessed-resident-tax-is-unknown-and-not-zero
+  (testing "a run for which no municipality notice was consulted has an
+            unanswered question about a lawful deduction, and `payable?`
+            refuses it — which is the enforcement, since there is
+            deliberately no governor rule for 住民税"
+    (let [m (f/lines {:verdict (f/verdict-for) :juminzei :none})
+          f* (:line/figure (last (:meisai/deductions m)))]
+      (is (= :unknown (:figure/provenance f*)))
+      (is (nil? (:figure/amount f*)))
+      (is (str/includes? (:figure/why f*) "住民税が無い」ではない"))
+      (is (not (meisai/payable? m))))))

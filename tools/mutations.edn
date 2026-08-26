@@ -7,7 +7,9 @@
 ;;
 ;; ## SCOPE — this table does not cover the whole repository
 ;;
-;; It covers exactly three things:
+;; It covers exactly the nine blocks below — the sentence said `three`
+;; until 2026-08-26, four blocks after it stopped being true, which is
+;; the small version of the failure this whole table is for:
 ;;
 ;;   1. `POST /api/handoff` — the route that brings back what
 ;;      `cloud-itonami-isco-4311` did with a payroll run this actor emitted,
@@ -27,6 +29,67 @@
 ;;      configuration, the console's origin check and the MoneyForward
 ;;      boundary (added 2026-08-25 — the fourteen entries at the end of this
 ;;      table).
+;;   6. The persistent schemas — the durable store, the keyed blind index,
+;;      the analytical projection and the cutover evidence (added 2026-08-26).
+;;   7. 住民税の通知の永続化 and its de-identified projection: the write
+;;      boundary in `payroll.juminzei` (duplicate, correction, conflicting
+;;      content, unreadable history, the 年税額 sum), the employer scoping of
+;;      the seventh chain in `payroll.store.kotobase`, and the two projection
+;;      guards in `payroll.projection.{schema,catalog}` (added 2026-08-26 —
+;;      the eight entries in block 7 at the end of this table).
+;;   8. Two invariants this comment previously listed as UNCOVERED:
+;;      `payroll.operations/redact` counting what it drops, and
+;;      `payroll.rates` failing closed on an untranscribed prefecture
+;;      (added 2026-08-26 — the two entries in block 8).
+;;   9. The 住民税 read that joins a REGISTERED 特別徴収 classification to
+;;      the payslip figure — `payroll.edge.console/run-of`'s
+;;      `:obligation` (added 2026-08-26 — the one entry in block 9).
+;;      It was unreachable until `:employment/resident-tax-obligation`
+;;      became one of `payroll.touroku/contract-fields`, which is why
+;;      the suite stayed green over a line no employer could produce.
+;;
+;; ## Measured 2026-08-26
+;;
+;; The ten entries of blocks 7 and 8 were each run alone against a green
+;; baseline (615 tests / 34,781 assertions). **All ten kill**, none survived,
+;; none was unmeasured. Which tests reddened:
+;;
+;;   :a-retried-registration-is-one-registration                       3 tests
+;;   :a-correction-must-name-what-it-replaces                          1
+;;   :the-same-notice-id-with-different-content-is-refused             1
+;;   :a-notice-is-not-appended-against-an-unreadable-history           1
+;;   :a-decision-notices-twelve-months-must-sum-to-its-annual-total    1
+;;   :the-notice-chain-is-employer-scoped                              1
+;;   :a-projected-row-refuses-an-undeclared-column                     2
+;;   :a-notice-projection-over-nothing-does-not-reach-the-ok-path      2
+;;   :redaction-counts-what-it-dropped                                 1
+;;   :an-untranscribed-prefecture-fails-closed                         2
+;;
+;; Block 9's single entry was run the same way against a green baseline
+;; of 621 tests / 34,822 assertions and **kills**:
+;;
+;;   :the-payslip-reads-the-obligation-off-the-contract                 2 tests
+;;
+;; Two of them were WRITTEN differently because a weaker form would have
+;; survived, and that is worth recording rather than only the result:
+;;
+;;   · `:an-untranscribed-prefecture-fails-closed` first disabled the branch
+;;     that answers `:prefecture-not-transcribed`. That form SURVIVES by
+;;     construction — the fall-through answer `:month-not-covered` is also in
+;;     `rates/rate-refusals`, so the suite's assertion (`the answer is one of
+;;     the refusals`) is satisfied by the mutant. It now widens the row
+;;     lookup instead, so 沖縄 is answered from 東京's transcribed row, which
+;;     is the failure the invariant is actually about: not `a different
+;;     refusal` but `a plausible payslip that is slightly wrong every month`.
+;;   · `:a-notice-projection-over-nothing-does-not-reach-the-ok-path` breaks
+;;     the GUARD rather than the status literal that
+;;     `:a-projection-over-nothing-is-not-a-successful-projection` already
+;;     breaks. Two entries on one branch would have been one entry written
+;;     twice; entering the branch and returning from it are the two ways it
+;;     can fail, and each has its own entry.
+;;
+;; Nothing in this round was UNMEASURED. `nbb tools/check-mutations.cljs`
+;; reports 104 mutations, every `:find` occurring exactly once.
 ;;
 ;; ## Measured 2026-08-25
 ;;
@@ -46,10 +109,13 @@
 ;;
 ;; What is NOT covered, and would be measured by nothing if this table were
 ;; read as a whole-repo verdict: the wage/net arithmetic rules, the advisor,
-;; both store backends, the pure `payroll.handoff`, and
-;; `POST /api/payroll-run`'s own body parsing. (`payroll.shiwake` left this
-;; list on 2026-08-18: its two new liability lines are covered below, but its
-;; ORIGINAL three-line entry still is not.) All of those have suites; none
+;; the pure `payroll.handoff`, and `POST /api/payroll-run`'s own body parsing.
+;; (`payroll.shiwake` left this list on 2026-08-18: its two new liability
+;; lines are covered below, but its ORIGINAL three-line entry still is not.
+;; `payroll.operations/redact` and `payroll.rates`' prefecture fail-closed
+;; left it on 2026-08-26 — block 8. The kotobase store backend is partly
+;; covered by blocks 6 and 7; `payroll.store`'s MemStore still is not.) All
+;; of those have suites; none
 ;; of those suites has been shown here to be capable of failing. A clean run
 ;; means "every invariant LISTED BELOW is measured", never "this actor is
 ;; measured" — reading it as the second would be exactly the defect the
@@ -657,4 +723,277 @@
   :file "src/payroll/artifact/payslip.cljc"
   :find "      [:statutory_form false]"
   :replace "      [:statutory_form true]"}
+
+ ;; --------------------------------------------------------------------------
+ ;; 6. The persistent schemas added on 2026-08-26 — the durable store, the
+ ;;    keyed blind index, the analytical projection and the cutover evidence.
+ ;;
+ ;;    This is the block where a surviving mutation would mean the durability
+ ;;    work was never measured. Each of these invariants is one this actor
+ ;;    now RELIES on rather than refuses: the ledger is no longer allowed to
+ ;;    be empty because it could not be read, a redelivered `:commit` is no
+ ;;    longer allowed to be a second payment, and a `MemStore` is no longer
+ ;;    allowed to satisfy the gate that switches off the incumbent.
+ ;; --------------------------------------------------------------------------
+
+ ;; An unreadable chain returning what it got is the one shape this whole
+ ;; repository is organised against: fewer entries look exactly like fewer
+ ;; records, and on the ledger that approves the month's second payroll run.
+ {:id :an-unreadable-chain-refuses-rather-than-returning-what-it-got
+  :invariant "読めない chain は空の chain ではない（entries-of は fail closed）"
+  :file "src/payroll/store/kotobase.cljc"
+  :find "    (if (:chain/complete? chain)"
+  :replace "    (if (or true (:chain/complete? chain))"}
+
+ ;; Without re-deriving the address, a node that serves altered bytes gets
+ ;; its alteration parsed as EDN and walked as a chain node.
+ {:id :a-block-is-verified-against-the-address-it-was-asked-for
+  :invariant "返ってきた bytes の内容アドレスを照合する"
+  :file "src/payroll/store/kotobase.cljc"
+  :find "        (if (not= cid actual)"
+  :replace "        (if (and false (not= cid actual))"}
+
+ ;; Appending against a chain that cannot be walked writes the record a
+ ;; second time whenever the block carrying the first one is the unreadable
+ ;; one.
+ {:id :an-append-against-an-unwalkable-chain-does-not-happen
+  :invariant "辿れない chain に追記しない"
+  :file "src/payroll/store/kotobase.cljc"
+  :find "                (not (:chain/complete? chain))"
+  :replace "                (and false (not (:chain/complete? chain)))"}
+
+ ;; The tags travel in the clear. An unkeyed hash over a guessable contract
+ ;; id lets anybody who can read the chain confirm that an employee is on
+ ;; this payroll without opening one sealed payload.
+ ;; ⚠ This entry was RE-ANCHORED after being measured. Its first form
+ ;; disabled `append!`'s own refusal when the provider will not tag, and it
+ ;; SURVIVED — because `store` refuses to build on such a provider in the
+ ;; first place, so no test ever reaches the second check. That is correct
+ ;; defence in depth and a useless mutation: the surviving one measured
+ ;; nothing, and a table entry that cannot go red is exactly the shape this
+ ;; harness exists to catch. It now mutates the check the suite does reach.
+ {:id :the-idempotency-tag-comes-from-a-keyed-provider
+  :invariant "冪等性の tag は鍵付きプロバイダから来る（無鍵ハッシュは確認オラクル）"
+  :file "src/payroll/store/kotobase.cljc"
+  :find "                     (not (and (blind/configured? blind-index)"
+  :replace "                     (not (and (or true (blind/configured? blind-index))"}
+
+ ;; One keychain item wired into two environment variables is the likely way
+ ;; this happens, and it passes every other check.
+ {:id :the-blind-index-key-is-not-the-envelope-key
+  :invariant "blind index の鍵は封筒の鍵と別でなければならない"
+  :file "src/payroll/kotobase/blind_index.cljc"
+  :file2-note "mutates the predicate itself, so the form stays balanced"
+  :find "  (not (or (identical? b envelope*)"
+  :replace "  (not (and (identical? b envelope*)"}
+
+ ;; A provider whose tag changes per call makes every redelivery a first
+ ;; write; one whose tag is constant collapses two contracts into one.
+ {:id :an-unstable-blind-index-is-refused-at-construction
+  :invariant "tag が安定しない・定数のプロバイダは構成時に拒否される"
+  :file "src/payroll/kotobase/blind_index.cljc"
+  :find "               (= (:index/tag a) (:index/tag a'))"
+  :replace "               (or true (= (:index/tag a) (:index/tag a')))"}
+
+ ;; A MemStore holding three reconciled cycles satisfies every other
+ ;; condition, and the whole evidence for switching off the incumbent would
+ ;; be inside a process that ends when it ends.
+ {:id :the-cutover-gate-needs-a-store-that-can-testify-to-its-durability
+  :invariant "MemStore は3サイクル揃っていても cutover gate を満たさない"
+  :file "src/payroll/cutover.cljc"
+  :find "        durable? (and (= :kotobase (:evidence/mode evidence))\n                      (true? (:evidence/survives-process-restart? evidence)))"
+  :replace "        durable? (or true (= :kotobase (:evidence/mode evidence))\n                      (true? (:evidence/survives-process-restart? evidence)))"}
+
+ ;; `not durable` and `not readable` are separate facts with separate
+ ;; operator actions, and the gate has to require both.
+ {:id :the-cutover-read-back-needs-every-chain-walked-to-its-end
+  :invariant "一つでも辿れない chain があれば読み戻しの条件は満たされない"
+  :file "src/payroll/cutover.cljc"
+  :find "          :gate/met? (and durable? readable? read-back?"
+  :replace "          :gate/met? (and durable? (or true readable?) read-back?"}
+
+ ;; A projection that appended zero rows because it was handed no rows is a
+ ;; projection over nothing, and reporting it as `:ok` is the evidence-floor
+ ;; failure this repository keeps finding.
+ {:id :a-projection-over-nothing-is-not-a-successful-projection
+  :invariant "行が0件の投影は :nothing-to-do であって :ok ではない"
+  :file "src/payroll/projection/catalog.cljc"
+  :find "      {:project/status :nothing-to-do :project/appended 0 :project/skipped []"
+  :replace "      {:project/status :ok :project/appended 0 :project/skipped []"}
+
+ ;; A driver that cannot answer `which keys are already there` cannot be
+ ;; appended to: every re-run would load the payroll run again.
+ {:id :a-driver-that-cannot-answer-existing-keys-is-not-written-to
+  :invariant "既存の鍵を答えられない driver には追記しない"
+  :file "src/payroll/projection/catalog.cljc"
+  :find "      (not= :ok (:catalog/status existing))"
+  :replace "      (and false (not= :ok (:catalog/status existing)))"}
+
+ ;; A row that silently dropped a forbidden column looks de-identified and
+ ;; leaves a caller believing the column was never there.
+ {:id :a-projected-row-refuses-rather-than-dropping-an-identifier
+  :invariant "投影行は禁止列を黙って落とさず拒否する"
+  :file "src/payroll/sensitive.cljc"
+  :find "  (blocked? (map :sensitive/key forbidden-outside) k))"
+  :replace "  (and false (blocked? (map :sensitive/key forbidden-outside) k)))"}
+
+ ;; A 120-byte record survives exactly one encoding, and a host that
+ ;; re-encoded the string would make every halfwidth katakana three bytes.
+ {:id :the-host-writes-zengin-bytes-without-re-encoding-them
+  :invariant "固定長ファイルの bytes は UTF-8 で再エンコードされない"
+  :file "src/payroll/host/jvm.clj"
+  :find "    (sequential? body) (byte-array (map #(unchecked-byte (bit-and (int %) 0xFF))"
+  :replace "    (sequential? body) (byte-array (map #(unchecked-byte (bit-and (int 63) 0xFF))"}
+
+ ;; `String.getBytes` substitutes `?` for a character the charset cannot
+ ;; represent, silently, and the record stays the right length — so the one
+ ;; failure this namespace exists to prevent would pass every length check.
+ {:id :a-character-with-no-single-byte-encoding-is-refused
+  :invariant "1バイトにならない文字は置き換えず拒否する"
+  :file "src/payroll/artifact/zengin.cljc"
+  :find "    (if (seq problems)
+      {:bytes/status :refused :bytes/problems problems"
+  :replace "    (if (and false (seq problems))
+      {:bytes/status :refused :bytes/problems problems"}
+
+ ;; --------------------------------------------------------------------------
+ ;; 7. 住民税の通知の永続化 and its de-identified projection (2026-08-26).
+ ;;
+ ;;    住民税 is the one figure this actor never computes, so the only ways it
+ ;;    can be wrong are ways of WRITING it: transcribed twice, transcribed
+ ;;    differently under one id, corrected without saying what was corrected,
+ ;;    or appended against a history nobody could read to the end. Every entry
+ ;;    in this block breaks one of those guards, and each of them fails
+ ;;    silently — an employer deducting a figure no municipality asked for
+ ;;    finds out when the 納入書 arrives with a different total.
+ ;;
+ ;;    The two projection entries are about the OTHER direction: what leaves
+ ;;    for the analytical catalog. There the failure is a row that looks
+ ;;    de-identified and a reader who believes the column was never there.
+ ;; --------------------------------------------------------------------------
+
+ ;; An operator who clicks twice has transcribed one piece of paper once. A
+ ;; second copy on this stream is a second answer to `which paper is current`.
+ {:id :a-retried-registration-is-one-registration
+  :invariant "同じ内容の再送は :duplicate であって二度目の登録ではない"
+  :file "src/payroll/juminzei.cljc"
+  :find "      (and same (= same record))"
+  :replace "      (and false same (= same record))"}
+
+ ;; 「訂正した」とだけ言う通知は、同じ年度について二つの通知を並べるだけで、
+ ;; どちらの月割額を控除すべきか誰にも答えられない。
+ {:id :a-correction-must-name-what-it-replaces
+  :invariant "改訂番号が1以上なら :notice/replaces を名指ししなければならない"
+  :file "src/payroll/juminzei.cljc"
+  :find "      (and (pos? revision) (str/blank? (str replaces)))"
+  :replace "      (and false (pos? revision) (str/blank? (str replaces)))"}
+
+ ;; Two disagreeing answers under one id: every later read returns whichever
+ ;; the backend happened to hand back last, and nothing reports the fork.
+ {:id :the-same-notice-id-with-different-content-is-refused
+  :invariant "同じ :notice/id が別の内容で登録されることはない"
+  :file "src/payroll/juminzei.cljc"
+  :find "      same\n      {:registration/status :refused\n       :registration/reason :conflicting-content"
+  :replace "      (and false same)\n      {:registration/status :refused\n       :registration/reason :conflicting-content"}
+
+ ;; A history that cannot be read to its end cannot answer 「これは既に登録
+ ;; されているか」, and appending against a partial read is registering
+ ;; without checking idempotency — which on this stream produces two notices
+ ;; under one id, the exact fork `notice-id` exists to prevent.
+ {:id :a-notice-is-not-appended-against-an-unreadable-history
+  :invariant "末尾まで読めない履歴に追記しない（読めない履歴は空の履歴ではない）"
+  :file "src/payroll/juminzei.cljc"
+  :find "    (if-not (:read/ok? read*)"
+  :replace "    (if-not (or true (:read/ok? read*))"}
+
+ ;; Both numbers are printed on the same piece of paper, so a disagreement
+ ;; between them is a transcription error and never a smaller tax. A dropped
+ ;; digit would otherwise be deducted every month for a year and look
+ ;; entirely lawful.
+ {:id :a-decision-notices-twelve-months-must-sum-to-its-annual-total
+  :invariant "決定通知書の12か月の月割額は年税額に一致する"
+  :file "src/payroll/juminzei.cljc"
+  :find "      (and summed (not= summed (:notice/annual-total m)))"
+  :replace "      (and false summed (not= summed (:notice/annual-total m)))"}
+
+ ;; One employer's notices are another employer's tax bill. The write side is
+ ;; guarded by the store's own scoping; this is the READ side, and an
+ ;; unscoped read hands a municipality's decision about one payroll to
+ ;; whoever asks about another.
+ {:id :the-notice-chain-is-employer-scoped
+  :invariant "通知の読み出しは :notice/employer で絞られる"
+  :file "src/payroll/store/kotobase.cljc"
+  :find "(filterv #(= client-id (:notice/employer %)) (entries-of s :juminzei))"
+  :replace "(filterv (constantly true) (entries-of s :juminzei))"}
+
+ ;; For the notice table the SCHEMA is the de-identification: 区市町村,
+ ;; 通知書番号 and the twelve 月割額 are simply not declared, so a row that
+ ;; carries one has to be refused. Dropping it instead produces a row that
+ ;; looks de-identified and a caller who believes the column was never there.
+ ;; (The sibling entry above breaks the `payroll.sensitive` half; this one
+ ;; breaks the undeclared-column half, and they are different guards.)
+ {:id :a-projected-row-refuses-an-undeclared-column
+  :invariant "表が宣言していない列は黙って落とさず拒否する"
+  :file "src/payroll/projection/schema.cljc"
+  :find "        undeclared (vec (remove (column-names table) (map name (keys row))))"
+  :replace "        undeclared (vec (remove (constantly true) (map name (keys row))))"}
+
+ ;; A notice projection handed no rows is a projection over nothing. Reported
+ ;; as `:ok` it reads as 「通知の履歴は投影済み」 about a run that looked at
+ ;; nothing. `:a-projection-over-nothing-is-not-a-successful-projection` above
+ ;; breaks the STATUS this branch returns; this one breaks the GUARD that
+ ;; reaches it, so the branch is never entered at all — the same invariant
+ ;; from the only other side it can fail from.
+ {:id :a-notice-projection-over-nothing-does-not-reach-the-ok-path
+  :invariant "行が0件なら :nothing-to-do の枝に入る（:ok の枝には落ちない）"
+  :file "src/payroll/projection/catalog.cljc"
+  :find "      (empty? rows)"
+  :replace "      (and false (empty? rows))"}
+
+ ;; --------------------------------------------------------------------------
+ ;; 8. Two invariants this table's own SCOPE comment named as UNCOVERED
+ ;;    (2026-08-26). Both are load-bearing and neither had ever been shown
+ ;;    capable of failing here.
+ ;; --------------------------------------------------------------------------
+
+ ;; A report that quietly removed a field is a report a reader believes was
+ ;; complete. Dropping is half the invariant; the COUNT is the other half,
+ ;; and it is the half that tells the reader something was removed at all.
+ {:id :redaction-counts-what-it-dropped
+  :invariant "落とした鍵は数えて :report/redacted-keys で報告する"
+  :file "src/payroll/operations.cljc"
+  :find "(assoc cleaned :report/redacted-keys @n)"
+  :replace "(assoc cleaned :report/redacted-keys 0)"}
+
+ ;; 「未転記の支部に近い支部の率を当てる」は、もっともらしい給与明細が毎月
+ ;; 少しずつ間違うということである。The refusal is the whole point of the
+ ;; prefecture being a REGISTERED fact rather than a defaulted one.
+ {:id :an-untranscribed-prefecture-fails-closed
+  :invariant "転記していない支部の料率は隣の支部で代用されない"
+  :file "src/payroll/rates.cljc"
+  :find "                                          (or (= :all (:rate/prefecture r))"
+  :replace "                                          (or true (= :all (:rate/prefecture r))"}
+
+ ;; --------------------------------------------------------------------------
+ ;; 9. 住民税 — the read that joins a registered classification to a payslip
+ ;;    figure (added 2026-08-26).
+ ;;
+ ;;    `:employment/resident-tax-obligation` was not one of
+ ;;    `payroll.touroku/contract-fields` until this change, so no contract
+ ;;    could carry it, `:obligation` was nil everywhere, and this read
+ ;;    returned nil no matter what anybody registered. The suite was green
+ ;;    throughout — nothing exercised the path, because nothing could reach
+ ;;    it. That is the shape this entry exists to make impossible again.
+ ;; --------------------------------------------------------------------------
+
+ ;; Breaking the READ and not the field inventory: a 住民税 line held for
+ ;; `:municipality-not-declared` on a contract that IS classified is
+ ;; indistinguishable, on the screen, from one nobody has classified — and
+ ;; the whole notice stream, the transcription form and the coverage panel
+ ;; produce no payslip figure between them while it is true.
+ {:id :the-payslip-reads-the-obligation-off-the-contract
+  :invariant "登録された特別徴収の区分が明細の住民税の行に届く（未登録と同じ扱いにしない）"
+  :file "src/payroll/edge/console.cljc"
+  :find "                                          :obligation (:employment/resident-tax-obligation\n                                                       contract)"
+  :replace "                                          :obligation (:employment/resident-tax-obligation\n                                                       nil)"}
 ]

@@ -36,8 +36,10 @@
     ledger     — append-only audit trail of every proposal/verdict/
                  disposition, commit or hold.
 
-  Two backends implement this protocol and `payroll.store-contract-test`
-  runs the same assertions against both. Three properties of this actor
+  THREE backends implement this protocol and `payroll.store-contract-test`
+  runs the same assertions against all of them — `MemStore`, `DatomicStore`
+  and `payroll.store.kotobase/KotobaseStore`, the last of which is the only
+  one that survives the process. Three properties of this actor
   make a silent disagreement between them especially expensive:
 
     - **Timesheets are the wage.** `kotoba.labor/wages-for` sums
@@ -60,6 +62,27 @@
   (:require [langchain.db :as d]
             [langchain-store.core :as ls]))
 
+(defprotocol Durable
+  "The evidence a backend can offer about its own durability. Implemented by
+  exactly one backend, and that is the point.
+
+  `payroll.cutover/evaluate` — the gate that answers `may MoneyForward be
+  switched off` — will not pass a store that does not satisfy this protocol.
+  A `MemStore` holding three reconciled cycles satisfies every OTHER
+  condition, and switching off the incumbent on the strength of it would mean
+  the only surviving record of three months of parallel running is inside a
+  process that ends when it ends. `satisfies?` is what makes that structural
+  rather than a check somebody remembers to write: `MemStore` and
+  `DatomicStore` do not implement it and therefore cannot supply the
+  evidence, and no argument to `evaluate` can substitute for it.
+
+  It returns evidence and not a boolean, because the gate has to be able to
+  say WHICH part is missing — `the transport does not claim durability` and
+  `two of seven chains cannot be walked` are different operator actions."
+  (durability-evidence [s]
+    "`{:evidence/mode :evidence/survives-process-restart? :evidence/readable?
+       :evidence/why …}` — measured, never asserted."))
+
 (defprotocol Store
   (client [s client-id])
   (contract-of [s contract-id])
@@ -70,7 +93,46 @@
   (register-contract! [s contract])
   (register-timesheet! [s entry])
   (commit-record! [s record])
-  (append-ledger! [s fact]))
+  (append-ledger! [s fact])
+  ;; -------------------------------------------------------------------
+  ;; 並行運用の証拠 (`payroll.cutover`) — a SIXTH stream, and its own one
+  ;; rather than a shape on the ledger.
+  ;;
+  ;; A cutover cycle is not a disposition: nothing in the graph produces it,
+  ;; the governor never sees it, and it is written by an operator recording
+  ;; that a parallel month was reconciled and by whom. Putting it on the
+  ;; ledger would make `count the committed runs` and `count the cycles`
+  ;; the same query over the same log, and the gate that decides whether
+  ;; MoneyForward may be switched off would then be counting a thing an
+  ;; advisor can cause.
+  ;;
+  ;; `cutover-cycles` is scoped by employer for `ledger-of`'s reason: one
+  ;; employer's parallel-run evidence is their wage bill in a different
+  ;; shape.
+  (commit-cutover-cycle! [s cycle])
+  (cutover-cycles [s client-id])
+  ;; -------------------------------------------------------------------
+  ;; 特別徴収税額決定通知書 (`payroll.juminzei`) — a SEVENTH stream, and its
+  ;; own one for the same reason the sixth is.
+  ;;
+  ;; A notice is a MUNICIPALITY's decision that an operator transcribed off a
+  ;; piece of paper. Nothing in the graph produces one, the governor never
+  ;; sees one, no proposal can cause one, and it is not an event in the life
+  ;; of a payroll run — it is a fact that was true before any run cited it.
+  ;; Putting it on the ledger would make 「登録された通知を数える」 and
+  ;; 「run を数える」 one query over one log, and the 住民税 an employee has
+  ;; deducted would then be countable from a stream an advisor can write to.
+  ;;
+  ;; Append-only, and nothing is ever overwritten: a 変更通知書 is a NEW
+  ;; entry naming what it replaces (`:notice/replaces`), and what is current
+  ;; is DERIVED by `payroll.juminzei/effective-notices`. That is what lets
+  ;; the console show what a municipality CORRECTED rather than only what it
+  ;; last said.
+  ;;
+  ;; `juminzei-notices` is scoped by employer for `ledger-of`'s reason: one
+  ;; employer's notices are another employer's tax bill.
+  (register-juminzei-notice! [s notice])
+  (juminzei-notices [s client-id]))
 
 (defrecord MemStore [a]
   Store
@@ -88,12 +150,23 @@
   (commit-record! [s record]
     (swap! a update :records (fnil conj []) record) s)
   (append-ledger! [s fact]
-    (swap! a update :ledger (fnil conj []) fact) s))
+    (swap! a update :ledger (fnil conj []) fact) s)
+  (commit-cutover-cycle! [s cycle]
+    (swap! a update :cutover (fnil conj []) cycle) s)
+  (cutover-cycles [_ client-id]
+    (when (some? client-id)
+      (filterv #(= client-id (:cycle/employer %)) (:cutover @a))))
+  (register-juminzei-notice! [s notice]
+    (swap! a update :juminzei (fnil conj []) notice) s)
+  (juminzei-notices [_ client-id]
+    (when (some? client-id)
+      (filterv #(= client-id (:notice/employer %)) (:juminzei @a)))))
 
 (defn mem-store
   ([] (mem-store {}))
   ([seed] (->MemStore (atom (merge {:clients {} :contracts {}
-                                    :timesheets [] :records [] :ledger []}
+                                    :timesheets [] :records [] :ledger []
+                                    :cutover [] :juminzei []}
                                    seed)))))
 
 ;; ---------------------------------------------------------------------------
@@ -130,7 +203,8 @@
 
 (def ^:private schema
   (ls/identity-schema [:client/id :contract/id
-                       :timesheet/seq :record/seq :ledger/seq]))
+                       :timesheet/seq :record/seq :ledger/seq :cutover/seq
+                       :juminzei/seq]))
 
 (defn- next-seq [conn seq-attr]
   (count (d/q [:find '?e :where ['?e seq-attr '_]] (d/db conn))))
@@ -160,7 +234,21 @@
                      (next-seq conn :record/seq) record) s)
   (append-ledger! [s fact]
     (ls/append-blob! conn :ledger/seq :ledger/fact
-                     (next-seq conn :ledger/seq) fact) s))
+                     (next-seq conn :ledger/seq) fact) s)
+  (commit-cutover-cycle! [s cycle]
+    (ls/append-blob! conn :cutover/seq :cutover/edn
+                     (next-seq conn :cutover/seq) cycle) s)
+  (cutover-cycles [_ client-id]
+    (when (some? client-id)
+      (filterv #(= client-id (:cycle/employer %))
+               (ls/read-stream conn :cutover/seq :cutover/edn))))
+  (register-juminzei-notice! [s notice]
+    (ls/append-blob! conn :juminzei/seq :juminzei/edn
+                     (next-seq conn :juminzei/seq) notice) s)
+  (juminzei-notices [_ client-id]
+    (when (some? client-id)
+      (filterv #(= client-id (:notice/employer %))
+               (ls/read-stream conn :juminzei/seq :juminzei/edn)))))
 
 (defn datomic-store
   "A DatomicStore over a fresh in-process langchain.db connection.
