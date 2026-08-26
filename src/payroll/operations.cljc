@@ -443,10 +443,17 @@
   drop the field and leave the panel rendering rows with a blank column.
 
   nil in, nil out: a deployment that computed no preflight is different from
-  one that computed a failing preflight, and the screen says which."
+  one that computed an incomplete one, and the screen says which.
+
+  `:preflight/verifies-credentials?` is forwarded rather than dropped, and
+  what it carries is always `false`. A panel that showed a complete
+  configuration without it would read as `this deployment can build the
+  projection`, which no preflight has ever been able to say."
   [pf]
   (when pf
-    {:preflight/ready? (boolean (:preflight/ready? pf))
+    {:preflight/configuration-complete?
+     (boolean (:preflight/configuration-complete? pf))
+     :preflight/verifies-credentials? (boolean (:preflight/verifies-credentials? pf))
      :preflight/reason (:preflight/reason pf)
      :preflight/why (:preflight/why pf)
      :preflight/missing
@@ -458,12 +465,44 @@
      :preflight/permissions
      (vec (for [r (:preflight/required-permissions pf)]
             (select-keys r [:permission/scope :permission/level
-                            :permission/why :permission/observed])))
-     :preflight/blocker
-     (when-let [b (:preflight/blocker pf)]
-       (select-keys b [:blocker/create-namespace :blocker/create-table
+                            :permission/why :permission/observed
+                            :permission/observed-on])))
+     ;; the 401 travels as HISTORY, and never without its resolution — a
+     ;; panel able to render the diagnosis alone would go on reporting a
+     ;; blocker that was cleared on the day it was found.
+     :preflight/history
+     (when-let [b (:preflight/history pf)]
+       (select-keys b [:blocker/observed-on
+                       :blocker/create-namespace :blocker/create-table
                        :blocker/diagnosis :blocker/resolution
-                       :blocker/until-then]))}))
+                       :blocker/resolved? :blocker/resolved-on
+                       :blocker/resolved-how :blocker/scope-of-resolution]))
+     ;; and the manual verification travels with its limits for the same
+     ;; reason: 「作れることが確かめられた」 is the sentence somebody would
+     ;; otherwise screenshot out of this panel.
+     ;;
+     ;; `:verification/token-handling` is forwarded and not summarised. The
+     ;; token has since been deleted, so nothing on this panel is an action
+     ;; any more — it is the audit trail of one, and an audit trail summarised
+     ;; is an audit trail with the checkable part removed. Forwarded WHOLE for
+     ;; that reason: `:credential/revoked-on` says when, `:credential/
+     ;; revoked-before-expiry?` says the issued expiry is not what ended it,
+     ;; and `:credential/revocation-verified-how` says how the delete was
+     ;; confirmed rather than assumed. A summary keeping only `revoked? true`
+     ;; would leave a bare boolean nobody can check.
+     :preflight/verification
+     (when-let [v (:preflight/live-verification pf)]
+       (select-keys v [:verification/on :verification/by :verification/path
+                       :verification/row-kind
+                       :verification/rows-appended :verification/rows-read-back
+                       :verification/rows-after-delete
+                       :verification/real-payroll-data-written?
+                       :verification/token-handling
+                       :verification/through-this-repository?
+                       :verification/deployed?
+                       :verification/production-verified?
+                       :verification/satisfies-cutover-gate?
+                       :verification/limits :verification/why]))}))
 
 (defn projection-section
   "Whether the analytical projection exists, is reachable, and read back.
@@ -472,11 +511,13 @@
   built is a different state from one that is broken, and the operator's next
   action differs.
 
-  `preflight` is the third distinguishable thing and answers a question the
-  other two cannot: `not-configured` says this deployment holds no catalog
-  driver, and the preflight says whether the deployment's ENVIRONMENT could
-  supply one — configuration missing, or configured and blocked on a token
-  permission that was measured rather than guessed. It makes no request."
+  `preflight` is the third distinguishable thing and answers a narrower
+  question than either: `not-configured` says this deployment holds no
+  catalog driver, and the preflight says only whether the deployment's
+  ENVIRONMENT NAMES the three things a driver would need. It reads no token
+  and makes no request, so it cannot say a build would succeed, and the panel
+  keeps the two apart — `payroll.projection.r2/preflight` returns no
+  `ready?`, and this section does not invent one."
   [health verification preflight]
   (let [pf (preflight-summary preflight)]
     (if (nil? health)

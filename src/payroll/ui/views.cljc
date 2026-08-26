@@ -1296,11 +1296,24 @@
                       "表の状態を報告できない")))
    (if-let [pf (:section/preflight s)]
      [:div {:class "dds-ext-stack"}
-      [:h3 "投影を作れる状態か（要求は一切送っていない）"]
-      [:p {:class (str "state-" (if (:preflight/ready? pf) "ready" "not-ready"))
-           :aria-label (if (:preflight/ready? pf) "作れる" "作れない")}
-       (str (if (:preflight/ready? pf) "作れる。" "作れない。")
+      ;; the heading used to read 「投影を作れる状態か」 and the paragraph
+      ;; under it answered 作れる／作れない from a preflight that reads no
+      ;; token and sends no request. It was answering a question it had no
+      ;; way to ask, so both now say what was actually checked: the settings.
+      [:h3 "設定の事前確認（要求は一切送っていない）"]
+      [:p {:class (str "state-"
+                       (if (:preflight/configuration-complete? pf)
+                         "configured" "not-configured"))
+           :aria-label (if (:preflight/configuration-complete? pf)
+                         "設定は揃っている" "設定が足りない")}
+       (str (if (:preflight/configuration-complete? pf)
+              "設定は揃っている。" "設定が足りない。")
             (:preflight/why pf))]
+      (when-not (:preflight/verifies-credentials? pf)
+        [:p {:class "why"}
+         (str "この確認は資格情報の確認ではない。"
+              "トークンに権限があるかどうかは、"
+              "driver に実際に作らせて読み戻すまで分からない")])
       (if (seq (:preflight/missing pf))
         [:table
          [:caption "足りない設定"]
@@ -1313,18 +1326,71 @@
              [:td (ui/yes-no-chip (:config/secret? c) (:config/label c))]])]]
         (empty-note "設定は揃っている（揃っていることは、作れることではない）"))
       [:table
-       [:caption "トークンに要る権限と、実測した結果"]
+       [:caption "トークンに要る権限と、手作業で実測した結果"]
        [:thead [:tr [:th {:scope "col"} "対象"] [:th {:scope "col"} "権限"]
-                [:th {:scope "col"} "実測"] [:th {:scope "col"} "理由"]]]
+                [:th {:scope "col"} "実測"] [:th {:scope "col"} "実測日"]
+                [:th {:scope "col"} "理由"]]]
        [:tbody
         (for [r (:preflight/permissions pf)]
           [:tr [:th {:scope "row"} (:permission/scope r)]
            [:td (:permission/level r)]
            [:td (str (name (or (:permission/observed r) :unknown)))]
+           [:td (or (:permission/observed-on r) "—")]
            [:td {:class "why"} (:permission/why r)]])]]
-      (when-let [b (:preflight/blocker pf)]
-        [:p {:class "why"} (str (:blocker/diagnosis b) "。"
-                                (:blocker/resolution b))])]
+      (when-let [v (:preflight/verification pf)]
+        [:div {:class "dds-ext-stack"}
+         [:p {:class "why"}
+          (str (:verification/on v) " に担当者が手作業で確かめた: "
+               "架空の 1 行を追記して " (:verification/rows-read-back v)
+               " 行を読み戻し、削除して " (:verification/rows-after-delete v)
+               " 行を読み戻した。実在の給与データは書いていない。"
+               (:verification/why v))]
+         ;; the limits are rendered, not summarised. This panel is the one
+         ;; most likely to be screenshotted into a status report, and
+         ;; 「確かめた」 without them is the claim this repository keeps
+         ;; refusing to make.
+         [:ul
+          (for [l (:verification/limits v)]
+            [:li {:class "why"} l])]
+         ;; the credential, stated as dates rather than as 「短命」. That word
+         ;; was on this screen and reads as 「もう使えない」; its replacement
+         ;; 「今も有効である」 was the same defect reversed — a present-tense
+         ;; claim rendered from a fixed record. Neither is here now, because
+         ;; the token was deleted, and 「失効済み」 is the one credential state
+         ;; a durable screen can print without dating: it cannot become false
+         ;; later. The dates are printed anyway — the revocation came BEFORE
+         ;; the issued expiry, so a panel showing only the expiry would leave
+         ;; a reader waiting for a date that stopped mattering.
+         (when-let [t (:verification/token-handling v)]
+           [:p {:class "why"}
+            (str "トークンの扱い: "
+                 (if (:credential/revoked? t)
+                   (str (:credential/revoked-on t)
+                        " に Cloudflare の dashboard で削除して失効済み"
+                        (when (:credential/revoked-before-expiry? t)
+                          (str "（発行時の期限 " (:credential/expires-on t)
+                               " より前）"))
+                        "。"
+                        (when-let [how (:credential/revocation-verified-how t)]
+                          (str how "。")))
+                   (str "期限は " (:credential/expires-on t)
+                        "（Cloudflare の dashboard の値）。"
+                        (:credential/revoked-observed-on t)
+                        "時点では未失効。"))
+                 (when (false? (:credential/value-saved-locally? t))
+                   "値はこの機械に一度も保存していない。")
+                 (when (:credential/local-clipboard-cleared? t)
+                   "貼り付けに使ったクリップボードは検証後に消去した。")
+                 "この repository は値そのものを読まない")])])
+      (when-let [b (:preflight/history pf)]
+        [:p {:class "why"}
+         (str "履歴（" (:blocker/observed-on b) "）: "
+              (:blocker/diagnosis b) "。"
+              (if (:blocker/resolved? b)
+                (str "解消済み（" (:blocker/resolved-on b) "）—— "
+                     (:blocker/resolved-how b) "。"
+                     (:blocker/scope-of-resolution b))
+                (:blocker/resolution b)))])]
      (empty-note (str "この配備は投影の事前確認を行っていない。"
                       "未実施は合格ではない")))])
 
