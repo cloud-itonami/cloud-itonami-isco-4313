@@ -80,7 +80,7 @@
   endpoint serves it, and `payroll.host.jvm-test` asserts it by actually
   restarting — in both directions: the two ephemeral modes lose the ledger,
   and the kotobase mode reconstructs it."
-  (:require [clojure.string :as str]
+  (:require [kotoba.lang.text :as str]
             [payroll.edge.endpoints :as api]
             [payroll.projection.r2 :as r2]))
 

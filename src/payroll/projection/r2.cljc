@@ -96,7 +96,7 @@
       R2_CATALOG_URI    the REST catalog endpoint
       R2_WAREHOUSE      `<account_id>_<bucket>`
       R2_CATALOG_TOKEN  read by the DRIVER, never by this repository"
-  (:require [clojure.string :as str]
+  (:require [kotoba.lang.text :as str]
             [payroll.projection.schema :as schema]))
 
 (def verified-on

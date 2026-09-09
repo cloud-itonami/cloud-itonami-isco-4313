@@ -8,7 +8,7 @@
   that the three it cannot are named rather than guessed, and that adding a
   jurisdiction to the catalog cannot widen a pass."
   (:require [clojure.set]
-            [clojure.string :as str]
+            [kotoba.lang.text :as str]
             [clojure.test :refer [deftest is testing]]
             [payroll.shakai-hoken :as hoken]))
 

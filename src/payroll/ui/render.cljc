@@ -38,7 +38,7 @@
   print stylesheet exists for the same reason: a payslip printed in black and
   white must still distinguish 確定 from 未確定, and it does, because the
   distinction was never in the colour."
-  (:require [clojure.string :as str]
+  (:require [kotoba.lang.text :as str]
             [jp-go-dds.page :as page]
             [jp-go-dds.tokens :as tokens]
             [payroll.ui.views :as views]))

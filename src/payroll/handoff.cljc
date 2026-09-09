@@ -48,7 +48,7 @@
   same discipline `payroll.shiwake` keeps. This actor proposes and records;
   writing into another actor's ledger, or reading it, would be the
   actuation the design refuses."
-  (:require [clojure.string :as str]))
+  (:require [kotoba.lang.text :as str]))
 
 (def outcomes
   "Every outcome a fact can name.

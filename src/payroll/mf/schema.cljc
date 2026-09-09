@@ -50,7 +50,7 @@
   this actor has no notice for is `:not-comparable` and one for an employee
   registered as 普通徴収 is `:only-in-mf`. Neither vanishes and neither is
   scored as agreement."
-  (:require [clojure.string :as str]))
+  (:require [kotoba.lang.text :as str]))
 
 (def unverified-note
   (str "この列名はこの repository の推測であって、"

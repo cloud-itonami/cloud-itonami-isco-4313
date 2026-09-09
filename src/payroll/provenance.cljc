@@ -56,7 +56,7 @@
   from a 厚生年金 figure derived from a rate in the Act would be laundering an
   unchecked figure through the presentation layer. `:declared` is what stops
   that, and `unverified?` is what a view keys the marker off."
-  (:require [clojure.string :as str]))
+  (:require [kotoba.lang.text :as str]))
 
 (def provenances
   "In the order a reader should weigh them: what this repository worked out,

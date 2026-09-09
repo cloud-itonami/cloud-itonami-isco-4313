@@ -26,7 +26,7 @@
   Amounts are excluded and not merely names: `never-logged` covers `:gross`
   and every withheld figure, because a payroll amount in a ticket is a
   payroll amount in whatever indexes tickets, and nobody chose that."
-  (:require [clojure.string :as str]
+  (:require [kotoba.lang.text :as str]
             [payroll.artifact.gensen :as gensen]
             [payroll.cutover :as cutover]
             [payroll.juminzei :as juminzei]

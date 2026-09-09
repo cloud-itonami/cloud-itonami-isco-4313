@@ -1,5 +1,5 @@
 (ns payroll.ui.views-test
-  (:require [clojure.string :as str]
+  (:require [kotoba.lang.text :as str]
             [clojure.test :refer [deftest is testing]]
             [payroll.artifact.bank-transfer :as bank]
             [payroll.fixtures :as f]

@@ -38,7 +38,7 @@
   figures named. A payslip is the document the employee reads; it is the last
   place a disagreement about what they were paid should be resolved silently
   in favour of either number."
-  (:require [clojure.string :as str]
+  (:require [kotoba.lang.text :as str]
             [payroll.chingin :as chingin]
             [payroll.provenance :as prov]))
 

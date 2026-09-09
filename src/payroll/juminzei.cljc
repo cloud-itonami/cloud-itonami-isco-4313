@@ -83,7 +83,7 @@
   it replaces (`:notice/replaces`), and what is current is DERIVED by
   `effective-notices` — which is why a superseded notice is still readable and
   the console can show what a municipality corrected."
-  (:require [clojure.string :as str]
+  (:require [kotoba.lang.text :as str]
             [payroll.store :as store]))
 
 (def source

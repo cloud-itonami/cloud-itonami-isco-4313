@@ -9,7 +9,7 @@
   money-moving op behind a socket, and does not report `nobody read the
   withholding law` and `we read it and this run satisfies it` with the same
   body."
-  (:require [clojure.string :as str]
+  (:require [kotoba.lang.text :as str]
             [clojure.test :refer [deftest is testing]]
             [kotoba.labor :as labor]
             [payroll.advisor :as advisor]

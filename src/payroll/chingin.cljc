@@ -55,7 +55,7 @@
   feeds `kotoba.labor/wages-for` two contracts differing only in each ignored
   key and asserts the output does not move. The claim is measured against the
   dependency rather than asserted about it."
-  (:require [clojure.string :as str]
+  (:require [kotoba.lang.text :as str]
             [kotoba.labor :as labor]))
 
 (def formula

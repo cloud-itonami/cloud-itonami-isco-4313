@@ -29,7 +29,7 @@
   registered 受取人名 survives `payroll.artifact.zengin`'s permitted-character
   rule, not merely `halfwidth?`, which was always necessary and never
   sufficient."
-  (:require [clojure.string :as str]
+  (:require [kotoba.lang.text :as str]
             [payroll.artifact.payee :as payee]
             [payroll.artifact.text :as text]
             [payroll.artifact.zengin :as zengin]))

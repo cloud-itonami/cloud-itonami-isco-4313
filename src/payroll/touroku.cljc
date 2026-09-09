@@ -43,7 +43,7 @@
   stale. The 標準報酬月額 month format is `payroll.shakai-hoken/month?`.
 
   What is NEW here is only the field inventory and the refusal to default."
-  (:require [clojure.string :as str]
+  (:require [kotoba.lang.text :as str]
             [kotoba.labor :as labor]
             [payroll.artifact.bank-transfer :as bank]
             [payroll.chingin :as chingin]

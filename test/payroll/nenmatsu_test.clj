@@ -9,7 +9,7 @@
   interesting assertions are that no figure is produced, that the ceiling
   check is sound in exactly one direction, and that three different facts do
   not print as one `out of scope`."
-  (:require [clojure.string :as str]
+  (:require [kotoba.lang.text :as str]
             [clojure.test :refer [deftest is testing]]
             [clojure.set]
             [kotoba.taxlaw :as taxlaw]

@@ -46,7 +46,7 @@
   A column this actor genuinely has no concept of is still a failure and not
   a footnote: `reconciled?` is false while any such column carries a value,
   and the report names it."
-  (:require [clojure.string :as str]
+  (:require [kotoba.lang.text :as str]
             [payroll.artifact.text :as text]
             [payroll.meisai :as meisai]
             [payroll.provenance :as prov]))

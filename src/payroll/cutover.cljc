@@ -57,7 +57,7 @@
   reported success against a store that kept nothing looks exactly like a
   write. 4 is separate from 5 because a `MemStore` passes 5 trivially — it
   reads back perfectly, right up until the process ends."
-  (:require [clojure.string :as str]
+  (:require [kotoba.lang.text :as str]
             [payroll.store :as store]))
 
 (def required-cycles 3)

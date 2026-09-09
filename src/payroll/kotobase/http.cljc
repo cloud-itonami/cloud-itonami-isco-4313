@@ -52,7 +52,7 @@
   name and every status-code mapping is a transcription that a first
   deployment will correct. They are named constants rather than string
   literals in five places for exactly that reason."
-  (:require [clojure.string :as str]
+  (:require [kotoba.lang.text :as str]
             [payroll.digest :as digest]
             [payroll.kotobase.transport :as transport]))
 

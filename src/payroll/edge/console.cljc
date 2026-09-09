@@ -64,7 +64,7 @@
   this console would be refused, and an HTTP client in a test would pass
   because it sends whatever Origin the test gave it (CLAUDE.md records this
   measurement). `payroll.host.config/security-headers` sets `same-origin`."
-  (:require [clojure.string :as str]
+  (:require [kotoba.lang.text :as str]
             [payroll.artifact.bank-transfer :as bank]
             [payroll.artifact.chingin-daicho :as daicho]
             [payroll.artifact.deduction-summary :as summary]

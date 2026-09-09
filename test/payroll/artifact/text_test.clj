@@ -1,5 +1,5 @@
 (ns payroll.artifact.text-test
-  (:require [clojure.string :as str]
+  (:require [kotoba.lang.text :as str]
             [clojure.test :refer [deftest is testing]]
             [payroll.artifact.text :as text]
             [payroll.provenance :as prov]))

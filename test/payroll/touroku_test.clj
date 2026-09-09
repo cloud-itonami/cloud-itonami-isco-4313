@@ -1,5 +1,5 @@
 (ns payroll.touroku-test
-  (:require [clojure.string :as str]
+  (:require [kotoba.lang.text :as str]
             [clojure.test :refer [deftest is testing]]
             [payroll.chingin :as chingin]
             [payroll.fixtures :as f]

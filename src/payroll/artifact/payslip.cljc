@@ -32,7 +32,7 @@
   invariants in `payroll.ui.a11y` are asserted against the tree; a test can
   read the structure without parsing markup. A namespace that emitted a
   string would make all three of those into string matching."
-  (:require [clojure.string :as str]
+  (:require [kotoba.lang.text :as str]
             [payroll.artifact.text :as text]
             [payroll.provenance :as prov]))
 

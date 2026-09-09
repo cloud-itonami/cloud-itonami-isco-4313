@@ -1,6 +1,6 @@
 (ns payroll.provenance-test
   (:require [clojure.set :as set]
-            [clojure.string :as str]
+            [kotoba.lang.text :as str]
             [clojure.test :refer [deftest is testing]]
             [payroll.provenance :as prov]))
 

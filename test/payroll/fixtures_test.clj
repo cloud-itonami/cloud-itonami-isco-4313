@@ -10,7 +10,7 @@
   These assertions scan the fixture and test sources for the shapes real data
   takes, so the rule is enforced by the suite rather than remembered."
   (:require [clojure.java.io :as io]
-            [clojure.string :as str]
+            [kotoba.lang.text :as str]
             [clojure.test :refer [deftest is testing]]
             [payroll.artifact.bank-transfer :as bank]
             [payroll.fixtures :as f]))

@@ -35,7 +35,7 @@
   read the full permitted-character rule (小文字のカナ・長音・中黒点 are
   refused, and are not merely halfwidth-or-not) — passing `halfwidth?` here
   does not mean a bank would accept the name."
-  (:require [clojure.string :as str]
+  (:require [kotoba.lang.text :as str]
             [payroll.meisai :as meisai]))
 
 ;; ---------------------------------------------------------------------------

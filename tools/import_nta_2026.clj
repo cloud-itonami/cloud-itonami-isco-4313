@@ -42,7 +42,7 @@
   read here and `payroll.rates` refuses for them. And the excess-rate tail
   is imported as a FORMULA, not as an answer, because the workbook states the
   rate and does not state the 端数処理 — see `payroll.rates/withhold`."
-  (:require [clojure.string :as str])
+  (:require [kotoba.lang.text :as str])
   (:import (java.io File FileInputStream)
            (java.security MessageDigest)
            (org.apache.poi.hssf.usermodel HSSFWorkbook)))

@@ -94,7 +94,7 @@
   This namespace builds a file. It does not approve a run, does not mark one
   paid, and is reachable only for runs `payroll.meisai/payable?` already
   admits. Nothing here writes to a store."
-  (:require [clojure.string :as str]
+  (:require [kotoba.lang.text :as str]
             [payroll.artifact.payee :as payee]
             [payroll.artifact.text :as text]
             [payroll.meisai :as meisai]))

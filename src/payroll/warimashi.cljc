@@ -71,7 +71,7 @@
   qualify. So this namespace excludes them BY REGISTERED KEY and reports the
   warning next to the figure; it does not decide whether an allowance called
   住宅手当 is one."
-  (:require [clojure.string :as str]))
+  (:require [kotoba.lang.text :as str]))
 
 (def sources
   {:mhlw/faq
