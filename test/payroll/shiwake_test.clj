@@ -1,5 +1,5 @@
 (ns payroll.shiwake-test
-  (:require [clojure.string]
+  (:require [kotoba.lang.text]
             [clojure.test :refer [deftest is testing]]
             [payroll.shiwake :as shiwake]))
 
@@ -158,7 +158,7 @@
     (let [r (shiwake/entry-request (insured-run :employees-pension-withheld nil)
                                    full-mapping)]
       (is (= :unusable-run (:shiwake/status r)))
-      (is (clojure.string/includes? (:shiwake/why r) "社会保険")))))
+      (is (kotoba.lang.text/includes? (:shiwake/why r) "社会保険")))))
 
 (deftest a-run-with-no-social-insurance-still-produces-the-three-line-entry
   (testing "requiring the two new accounts from every run would refuse entries
@@ -176,7 +176,7 @@
     (testing label
       (let [r (shiwake/entry-request run mapping)]
         (is (= :no-mapping (:shiwake/status r)))
-        (is (clojure.string/includes? (:shiwake/why r) needle))))))
+        (is (kotoba.lang.text/includes? (:shiwake/why r) needle))))))
 
 (deftest a-zero-social-insurance-total-omits-its-line-like-the-tax-one-does
   (let [req (:shiwake/request
@@ -194,4 +194,4 @@
     (let [r (shiwake/entry-request (insured-run :health-insurance-withheld bad)
                                    full-mapping)]
       (is (= :unusable-run (:shiwake/status r)) (str "should refuse " (pr-str bad)))
-      (is (clojure.string/includes? (:shiwake/why r) "non-negative")))))
+      (is (kotoba.lang.text/includes? (:shiwake/why r) "non-negative")))))

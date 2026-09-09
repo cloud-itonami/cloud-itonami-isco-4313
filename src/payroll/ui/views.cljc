@@ -32,7 +32,7 @@
   because the one thing an operator must not be able to do here is form an
   overall impression of health. `payroll.ui.state/tone-of` is worst-wins for
   the same reason."
-  (:require [clojure.string :as str]
+  (:require [kotoba.lang.text :as str]
             [payroll.artifact.bank-transfer :as bank]
             [payroll.artifact.zengin :as zengin]
             [payroll.juminzei :as juminzei]

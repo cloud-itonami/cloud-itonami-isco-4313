@@ -46,7 +46,7 @@
   worth querying. It answers 「訂正がいつ何度あったか、いま何年度が有効か」
   and, by construction, nothing about 「いくらか」: see the absences written
   beside its columns."
-  (:require [clojure.string :as str]
+  (:require [kotoba.lang.text :as str]
             [payroll.digest :as digest]
             [payroll.juminzei :as juminzei]
             [payroll.sensitive :as sensitive]))

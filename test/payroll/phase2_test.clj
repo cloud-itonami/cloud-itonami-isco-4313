@@ -10,7 +10,7 @@
   the test walks a range rather than checking one input, because a refusal
   that only fires for the value somebody typed is not a refusal."
   (:require [clojure.java.io :as io]
-            [clojure.string :as str]
+            [kotoba.lang.text :as str]
             [clojure.test :refer [deftest is testing]]
             [payroll.artifact.gensen :as gensen]
             [payroll.artifact.zengin :as zengin]

@@ -28,7 +28,7 @@
   qualified keyword and on the bare name. A projection driver renaming
   `:bank/account-number` to `\"account_number\"` on its way out is exactly the
   move this check has to survive, so `blocked-name?` normalises both."
-  (:require [clojure.string :as str]))
+  (:require [kotoba.lang.text :as str]))
 
 (def forbidden-outside
   "Keys whose VALUE may never leave the operational store.
@@ -92,7 +92,7 @@
   (-> (cond
         (keyword? k) (str (namespace k) "/" (name k))
         :else (str k))
-      str/lower-case
+      str/lower
       (str/replace #"[-_\s]" "")))
 
 (defn- tail [k] (last (str/split (normalise k) #"/")))

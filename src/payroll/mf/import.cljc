@@ -28,7 +28,7 @@
   actor exists to prevent. The rows are for RECONCILIATION: comparing what
   MoneyForward did against what this actor would do, for the two or three
   parallel cycles the cutover gate requires."
-  (:require [clojure.string :as str]
+  (:require [kotoba.lang.text :as str]
             [payroll.mf.schema :as schema]
             [payroll.provenance :as prov]))
 

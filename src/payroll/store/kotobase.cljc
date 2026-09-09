@@ -83,7 +83,7 @@
   anybody else is REFUSED rather than filed. Absent, nothing is restricted,
   which is what the shared contract test runs under."
   (:require [clojure.edn :as edn]
-            [clojure.string :as str]
+            [kotoba.lang.text :as str]
             [payroll.digest :as digest]
             [payroll.kotobase.blind-index :as blind]
             [payroll.kotobase.envelope :as envelope]

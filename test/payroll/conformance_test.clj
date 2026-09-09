@@ -10,7 +10,7 @@
   This suite checks not WHAT the governor decided (the other suites do that)
   but that whatever it decided is internally consistent, across every
   disposition this actor has."
-  (:require [clojure.string]
+  (:require [kotoba.lang.text]
             [clojure.test :refer [deftest is testing]]
             [kotoba.labor :as labor]
             [payroll.nenmatsu :as nenmatsu]
@@ -366,7 +366,7 @@
     (testing (str name)
       (let [answer (:shakai-hoken/answer si)]
         (is (some? answer))
-        (is (not (clojure.string/blank? (str (or (:shakai-hoken/why si)
+        (is (not (kotoba.lang.text/blank? (str (or (:shakai-hoken/why si)
                                                  (:shakai-hoken/answer si)))))
             "a report nobody can read is not a report")
         (when (contains? #{:not-catalogued :refused} answer)

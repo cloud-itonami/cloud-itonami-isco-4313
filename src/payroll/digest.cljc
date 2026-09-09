@@ -36,7 +36,7 @@
   suite does not run under ClojureScript**, so that path is careful rather
   than verified. That distinction is the kind this repository exists to keep,
   so it is written here rather than left to be assumed."
-  (:require [clojure.string :as str]))
+  (:require [kotoba.lang.text :as str]))
 
 ;; ---------------------------------------------------------------------------
 ;; 32-bit arithmetic that means the same thing on both runtimes
@@ -259,7 +259,7 @@
   comparing it to a remembered string. Returns nil on a character outside the
   alphabet — a CID with a typo is not a CID with a nearby meaning."
   [s]
-  (loop [cs (seq (str/lower-case (str s))) acc 0 bits 0 out (transient [])]
+  (loop [cs (seq (str/lower (str s))) acc 0 bits 0 out (transient [])]
     (if-let [c (first cs)]
       (if-let [i (str/index-of base32-alphabet (str c))]
         (let [acc' (+ (* acc 32) i) bits' (+ bits 5)]

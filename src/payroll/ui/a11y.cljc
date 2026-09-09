@@ -64,7 +64,7 @@
   element carrying a `prov-*`, `state-*` or `disposition-*` class must also
   carry text or an `aria-label`, and this is the rule most likely to catch a
   future edit that adds a tidy coloured dot."
-  (:require [clojure.string :as str]))
+  (:require [kotoba.lang.text :as str]))
 
 (def state-class-prefixes
   "Classes whose whole job is to say what state something is in. An element

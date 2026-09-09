@@ -1,7 +1,7 @@
 (ns payroll.artifact.artifacts-test
   "The five output artifacts: determinism, refusals, and the claims each one
   does not make."
-  (:require [clojure.string :as str]
+  (:require [kotoba.lang.text :as str]
             [clojure.test :refer [deftest is testing]]
             [payroll.artifact.bank-transfer :as bank]
             [payroll.artifact.chingin-daicho :as daicho]

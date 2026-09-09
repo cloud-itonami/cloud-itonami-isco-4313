@@ -4,7 +4,7 @@
   Every fixture here is synthetic and is a CONJECTURE about the export's
   shape. No real MoneyForward file has been read by this repository, and the
   first test in this namespace is the one that keeps that statement true."
-  (:require [clojure.string :as str]
+  (:require [kotoba.lang.text :as str]
             [clojure.test :refer [deftest is testing]]
             [payroll.fixtures :as f]
             [payroll.mf.import :as mf]

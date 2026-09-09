@@ -29,7 +29,7 @@
   turns a missing figure into a zero in the JSON, which is the single thing
   this repository exists to refuse, so the writers here take figures rather
   than numbers and refuse."
-  (:require [clojure.string :as str]
+  (:require [kotoba.lang.text :as str]
             [payroll.provenance :as prov]))
 
 ;; ---------------------------------------------------------------------------

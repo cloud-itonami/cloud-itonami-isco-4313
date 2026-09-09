@@ -67,7 +67,7 @@
   withheld amount in a jurisdiction that obliges withholding is refused by
   the governor before it ever reaches here; one that reaches here with the
   field absent is `:unusable-run`, not zero."
-  (:require [clojure.string :as str]))
+  (:require [kotoba.lang.text :as str]))
 
 (defn- amount? [x] (and (number? x) (not (neg? x))))
 

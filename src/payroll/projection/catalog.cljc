@@ -51,7 +51,7 @@
   namespace and each table, and reports what it got — including `:missing`,
   which is a fact and not an error. A projection whose table does not exist
   is not unhealthy; it is unbuilt, and those need different actions."
-  (:require [clojure.string :as str]
+  (:require [kotoba.lang.text :as str]
             [payroll.projection.schema :as schema]))
 
 (defprotocol Catalog

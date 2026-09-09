@@ -77,7 +77,7 @@
   holding. `sources` therefore reads the URL, the page, the digest and the
   retrieval date OUT of the generated file rather than restating them: a
   regeneration against a new pin moves both together or neither."
-  (:require [clojure.string :as str]
+  (:require [kotoba.lang.text :as str]
             [payroll.rates.monthly-2026 :as nta]))
 
 ;; ---------------------------------------------------------------------------

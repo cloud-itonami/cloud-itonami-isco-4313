@@ -28,7 +28,7 @@
   by re-merging them at the last moment. `未確定` means nobody supplied the
   figure; `保留` means the governor refused the run over it. The operator's
   next action is different: find the number, versus read the violation."
-  (:require [clojure.string :as str]
+  (:require [kotoba.lang.text :as str]
             [payroll.provenance :as prov]))
 
 (def chips

@@ -93,7 +93,7 @@
   二千万円**以下** is inclusive: at exactly 20,000,000 the employee is inside.
   The ceiling itself is read from taxlaw's `:rule/income-ceiling-yen`, not
   typed in this repository."
-  (:require [clojure.string :as str]
+  (:require [kotoba.lang.text :as str]
             [kotoba.taxlaw :as taxlaw]))
 
 (def answers

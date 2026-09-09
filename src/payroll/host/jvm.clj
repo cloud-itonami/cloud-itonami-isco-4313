@@ -43,7 +43,7 @@
   against an empty store gets `:no-client`, which is the governor's own
   answer and points at the registration that has not happened."
   (:require [clojure.java.io :as io]
-            [clojure.string :as str]
+            [kotoba.lang.text :as str]
             [payroll.edge.console :as console]
             [payroll.edge.endpoints :as api]
             [payroll.host.config :as config])
@@ -218,7 +218,7 @@
   [{:keys [store config advisor css]} ^HttpExchange exchange]
   (let [uri (.getRequestURI exchange)
         path (.getPath uri)
-        method (keyword (str/lower-case (.getRequestMethod exchange)))
+        method (keyword (str/lower (.getRequestMethod exchange)))
         did (header exchange (:config/did-header config))
         headers (:config/headers config)
         mode (:config/store-mode config)

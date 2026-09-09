@@ -74,7 +74,7 @@
   A single artifact that carried them always would put a My Number on every
   screen an operator looks at. `payroll.sensitive` is the vocabulary and
   `payroll.projection.schema` uses the same one to keep both out of R2."
-  (:require [clojure.string :as str]
+  (:require [kotoba.lang.text :as str]
             [payroll.artifact.text :as text]
             [payroll.provenance :as prov]
             [payroll.rates :as rates]

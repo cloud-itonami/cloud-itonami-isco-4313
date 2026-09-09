@@ -1,5 +1,5 @@
 (ns payroll.governor-test
-  (:require [clojure.string :as str]
+  (:require [kotoba.lang.text :as str]
             [clojure.test :refer [deftest is testing]]
             [kotoba.labor :as labor]
             [payroll.chingin :as chingin]
@@ -181,7 +181,7 @@
       (is (:hard? v))
       (is (some #(= :income-tax-not-withheld (:rule %)) (:violations v)))
       (testing "the hold names the article it rests on"
-        (is (some #(clojure.string/includes? (:detail %) "所得税法 第百八十三条第一項")
+        (is (some #(str/includes? (:detail %) "所得税法 第百八十三条第一項")
                   (:violations v)))))))
 
 (deftest no-confidence-buys-past-the-withholding-hold
@@ -237,7 +237,7 @@
       (is (nil? (get-in v [:tax :jurisdiction])))
       (is (= :not-declared (get-in v [:tax :withholding :taxlaw/coverage]))
           "`nobody looked` and `we looked and it was fine` must differ")
-      (is (not (clojure.string/blank? (get-in v [:tax :withholding :taxlaw/why])))))))
+      (is (not (str/blank? (get-in v [:tax :withholding :taxlaw/why])))))))
 
 (deftest a-payment-outside-the-read-article-is-not-held-and-says-why
   (testing "所得税法 第百八十三条第一項 binds a payer 「居住者に対し国内において」。
@@ -285,7 +285,7 @@
                             (jp-proposal :income-tax-withheld 8420) (jp-store))]
       (is (:ok? v))
       (is (= :not-evaluated (get-in v [:tax :year-end-adjustment :taxlaw/coverage])))
-      (is (not (clojure.string/blank?
+      (is (not (str/blank?
                 (get-in v [:tax :year-end-adjustment :taxlaw/why])))))))
 
 (deftest the-proposal-cannot-choose-its-own-jurisdiction

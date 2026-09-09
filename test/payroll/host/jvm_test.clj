@@ -8,7 +8,7 @@
   what it accepts does not survive it, are only observable from outside the
   process."
   (:require [clojure.edn :as edn]
-            [clojure.string :as str]
+            [kotoba.lang.text :as str]
             [clojure.test :refer [deftest is testing]]
             [payroll.fixtures :as f]
             [payroll.host.config :as config]
