@@ -1,5 +1,5 @@
 ;; One mutation per invariant. `:find` must occur EXACTLY ONCE in `:file` —
-;; `tools/mutate.cljs` refuses otherwise, because a mutation that landed in a
+;; `tools/mutate.kotoba` refuses otherwise, because a mutation that landed in a
 ;; comment or in a second call site produces a red suite that proves nothing.
 ;;
 ;; Read the pair before trusting a red: the thing broken and the thing
@@ -88,7 +88,7 @@
 ;;     twice; entering the branch and returning from it are the two ways it
 ;;     can fail, and each has its own entry.
 ;;
-;; Nothing in this round was UNMEASURED. `nbb tools/check-mutations.cljs`
+;; Nothing in this round was UNMEASURED. `nbb tools/check-mutations.kotoba`
 ;; reports 104 mutations, every `:find` occurring exactly once.
 ;;
 ;; ## Measured 2026-08-25
@@ -155,67 +155,67 @@
 ;; exists to prevent, so a drop has to say why.
 [{:id :handoff-is-routed
   :invariant "the route exists — without it the reconciliation reaches nothing"
-  :file "src/payroll/edge/endpoints.cljc"
+  :file "src/payroll/edge/endpoints.kotoba"
   :find "(= path \"/api/handoff\")"
   :replace "(= path \"/api/handoff-disabled\")"}
 
  {:id :handoff-writes-to-the-ledger
   :invariant "the facts are appended, not merely computed and returned"
-  :file "src/payroll/edge/endpoints.cljc"
+  :file "src/payroll/edge/endpoints.kotoba"
   :find "(doseq [f facts] (store/append-ledger! store f))"
   :replace "(doseq [f []] (store/append-ledger! store f))"}
 
  {:id :employer-comes-from-the-did
   :invariant "the body cannot write into another employer's ledger slice"
-  :file "src/payroll/edge/endpoints.cljc"
+  :file "src/payroll/edge/endpoints.kotoba"
   :find "(assoc (handoff/handoff-fact submission response)\n                                   :client-id client-id)"
   :replace "(merge {:client-id client-id}\n                                   (handoff/handoff-fact submission response))"}
 
  {:id :a-refused-body-writes-nothing
   :invariant "a 400 appends nothing — half a batch is worse than none"
-  :file "src/payroll/edge/endpoints.cljc"
+  :file "src/payroll/edge/endpoints.kotoba"
   :find "(if error\n        {:status 400 :body {:ok false :error error}}"
   :replace "(if false\n        {:status 400 :body {:ok false :error error}}"}
 
  {:id :handoffs-must-be-a-vector
   :invariant "a :handoffs that is not a vector is a 400, not an empty success"
-  :file "src/payroll/edge/endpoints.cljc"
+  :file "src/payroll/edge/endpoints.kotoba"
   :find "(not (vector? (:handoffs m))) {:error \"body must carry a :handoffs vector\"}"
   :replace "(not (coll? (:handoffs m))) {:error \"body must carry a :handoffs vector\"}"}
 
  {:id :an-empty-batch-is-refused
   :invariant "an empty :handoffs is a caller error, not a recorded nothing"
-  :file "src/payroll/edge/endpoints.cljc"
+  :file "src/payroll/edge/endpoints.kotoba"
   :find "(empty? (:handoffs m)) {:error \":handoffs must not be empty\"}"
   :replace "(empty? nil) {:error \":handoffs must not be empty\"}"}
 
  {:id :each-pair-must-carry-a-submission
   :invariant "a pair with no submission is a 400 before anything is appended"
-  :file "src/payroll/edge/endpoints.cljc"
+  :file "src/payroll/edge/endpoints.kotoba"
   :find "(not (every? #(map? (:submission %)) (:handoffs m)))"
   :replace "(not (every? #(some? %) (:handoffs m)))"}
 
  {:id :a-non-map-response-is-the-callers-error
   :invariant "a malformed request is not recorded as an odd answer from 4311"
-  :file "src/payroll/edge/endpoints.cljc"
+  :file "src/payroll/edge/endpoints.kotoba"
   :find "(not (every? #(map? (:response %)) (:handoffs m)))"
   :replace "(not (every? #(some? %) (:handoffs m)))"}
 
  {:id :duplicate-is-resolved
   :invariant ":unresolved is what a person must look at; a duplicate is settled"
-  :file "src/payroll/edge/endpoints.cljc"
+  :file "src/payroll/edge/endpoints.kotoba"
   :find "(contains? #{:posted :duplicate}\n                                                        (:handoff/outcome %))"
   :replace "(contains? #{:posted}\n                                                        (:handoff/outcome %))"}
 
  {:id :posted-is-resolved
   :invariant "and a success is settled too — :unresolved is not `everything`"
-  :file "src/payroll/edge/endpoints.cljc"
+  :file "src/payroll/edge/endpoints.kotoba"
   :find "#{:posted :duplicate}\n                                                        (:handoff/outcome %))"
   :replace "#{:duplicate}\n                                                        (:handoff/outcome %))"}
 
  {:id :handoff-needs-an-allowlist
   :invariant "an unconfigured deployment is 503, not an open write path"
-  :file "src/payroll/edge/endpoints.cljc"
+  :file "src/payroll/edge/endpoints.kotoba"
   :find "    (nil? allowlist)\n    {:status 503 :body {:ok false :error \"no allow-list configured\"}}\n\n    (nil? (employer-for allowlist caller-did))\n    {:status 403 :body {:ok false :error \"caller not permitted\"}}\n\n    :else\n    (let [{:keys [pairs error]}"
   :replace "    (nil? nil)\n    {:status 503 :body {:ok false :error \"no allow-list configured\"}}\n\n    (nil? (employer-for allowlist caller-did))\n    {:status 403 :body {:ok false :error \"caller not permitted\"}}\n\n    :else\n    (let [{:keys [pairs error]}"
 
@@ -223,13 +223,13 @@
 
  {:id :handoff-refuses-an-unlisted-caller
   :invariant "an unlisted DID cannot append to anyone's ledger"
-  :file "src/payroll/edge/endpoints.cljc"
+  :file "src/payroll/edge/endpoints.kotoba"
   :find "    (nil? (employer-for allowlist caller-did))\n    {:status 403 :body {:ok false :error \"caller not permitted\"}}\n\n    :else\n    (let [{:keys [pairs error]}"
   :replace "    (nil? nil)\n    {:status 403 :body {:ok false :error \"caller not permitted\"}}\n\n    :else\n    (let [{:keys [pairs error]}"}
 
  {:id :a-handoff-is-not-a-commit
   :invariant "a reader counting what this actor paid must not count these"
-  :file "src/payroll/handoff.cljc"
+  :file "src/payroll/handoff.kotoba"
   :find "(merge {:disposition :handoff}"
   :replace "(merge {:disposition :commit}"}
 
@@ -240,31 +240,31 @@
 
  {:id :an-uncheckable-withholding-rule-is-still-a-hold
   :invariant "a US payroll run is held as hard as before the US was catalogued"
-  :file "src/payroll/governor.cljc"
+  :file "src/payroll/governor.kotoba"
   :find "      (= :none (:taxlaw/coverage withholding))"
   :replace "      (= :nope (:taxlaw/coverage withholding))"}
 
  {:id :the-payroll-hold-explains-itself-accurately
   :invariant "`kotoba.taxlaw に無い` is false for a catalogued jurisdiction"
-  :file "src/payroll/governor.cljc"
+  :file "src/payroll/governor.kotoba"
   :find "             :detail (if-let [why (:taxlaw/why withholding)]"
   :replace "             :detail (if-let [why nil]"}
 
  {:id :unread-is-not-absent-and-the-detail-says-so
   :invariant "the US does oblige withholding; only the reading is missing"
-  :file "src/payroll/governor.cljc"
+  :file "src/payroll/governor.kotoba"
   :find "                            \"。これは義務が無いという意味ではない\""
   :replace "                            \"。\""}
 
  {:id :the-out-of-scope-facet-is-forwarded-to-the-operator
   :invariant "an operator learns WHICH facet was missing"
-  :file "src/payroll/governor.cljc"
+  :file "src/payroll/governor.kotoba"
   :find "             :taxlaw/out-of-scope (:taxlaw/out-of-scope withholding)"
   :replace "             :taxlaw/out-of-scope nil"}
 
  {:id :a-really-absent-jurisdiction-keeps-the-old-sentence
   :invariant "the new sentence must not replace the old one wholesale"
-  :file "src/payroll/governor.cljc"
+  :file "src/payroll/governor.kotoba"
   :find "                       (str \"employer が法域 \" (pr-str juris)\n                            \" を宣言しているが kotoba.taxlaw に無い\""
   :replace "                       (str \"employer が法域 \" (pr-str juris)\n                            \" を宣言しているが検査できない\""}
 
@@ -280,199 +280,199 @@
 
  {:id :the-over-under-is-never-computed
   :invariant "第百九十条's over/under is not computable from anything read here"
-  :file "src/payroll/nenmatsu.cljc"
+  :file "src/payroll/nenmatsu.kotoba"
   :find ":nenmatsu/over-or-under :not-computable"
   :replace ":nenmatsu/over-or-under (- withheld-recorded 0)"}
 
  {:id :the-years-tax-is-never-computed
   :invariant "and neither is the year's correct tax — 別表 was not read"
-  :file "src/payroll/nenmatsu.cljc"
+  :file "src/payroll/nenmatsu.kotoba"
   :find ":nenmatsu/annual-tax :not-computable"
   :replace ":nenmatsu/annual-tax 0"}
 
  {:id :the-unread-table-is-named
   :invariant "the refusal names WHICH table nobody read, read off taxlaw"
-  :file "src/payroll/nenmatsu.cljc"
+  :file "src/payroll/nenmatsu.kotoba"
   :find "   (:rule/amount-source-not-read\n    (taxlaw/facet-of jurisdiction :jurisdiction/wage-withholding))"
   :replace "   (:rule/no-such-key\n    (taxlaw/facet-of jurisdiction :jurisdiction/wage-withholding))"}
 
  {:id :the-recorded-sums-are-this-actors-own
   :invariant "wages recorded here are not 「その年中に…確定した給与等の金額」"
-  :file "src/payroll/nenmatsu.cljc"
+  :file "src/payroll/nenmatsu.kotoba"
   :find ":nenmatsu/records-are-this-actors-only? true"
   :replace ":nenmatsu/records-are-this-actors-only? false"}
 
  {:id :the-ceiling-is-inclusive
   :invariant "二千万円以下 — at exactly 20,000,000 the employee is INSIDE"
-  :file "src/payroll/nenmatsu.cljc"
+  :file "src/payroll/nenmatsu.kotoba"
   :find "(and (number? ceiling) (pos? run-count) (> wages ceiling)) :above-ceiling"
   :replace "(and (number? ceiling) (pos? run-count) (>= wages ceiling)) :above-ceiling"}
 
  {:id :the-ceiling-is-actually-read
   :invariant "the ceiling comes from taxlaw; a lookup that returns nothing must not silently stop checking"
-  :file "src/payroll/nenmatsu.cljc"
+  :file "src/payroll/nenmatsu.kotoba"
   :find "ceiling (:rule/income-ceiling-yen (taxlaw/facet-of jurisdiction facet))"
   :replace "ceiling (:rule/no-such-ceiling (taxlaw/facet-of jurisdiction facet))"}
 
  {:id :under-the-recorded-ceiling-establishes-nothing
   :invariant "unseen wages only ADD, so `over` is certain and `under` is not"
-  :file "src/payroll/nenmatsu.cljc"
+  :file "src/payroll/nenmatsu.kotoba"
   :find ":nenmatsu/establishes-inside? false"
   :replace ":nenmatsu/establishes-inside? true"}
 
  {:id :an-empty-record-is-not-zero-wages
   :invariant "no recorded runs is an empty record, never a fact about wages"
-  :file "src/payroll/nenmatsu.cljc"
+  :file "src/payroll/nenmatsu.kotoba"
   :find ":no-runs-recorded? (zero? run-count)"
   :replace ":no-runs-recorded? false"}
 
  {:id :an-unobserved-declaration-is-not-an-unfiled-one
   :invariant "software cannot see a piece of paper; unseen is not `not filed`"
-  :file "src/payroll/nenmatsu.cljc"
+  :file "src/payroll/nenmatsu.kotoba"
   :find "(nil? declaration) :declaration-not-observed"
   :replace "(nil? declaration) :declaration-not-filed"}
 
  {:id :a-string-is-not-a-declaration
   :invariant "`\"true\"` satisfies neither nil? nor false? and would fall through to :owed"
-  :file "src/payroll/nenmatsu.cljc"
+  :file "src/payroll/nenmatsu.kotoba"
   :find "  (when (boolean? x) x))"
   :replace "  (when (some? x) x))"}
 
  {:id :not-yet-and-never-are-different-answers
   :invariant "`come back after the last payslip` is not `this employee does not qualify`"
-  :file "src/payroll/nenmatsu.cljc"
+  :file "src/payroll/nenmatsu.kotoba"
   :find "(false? final?) :year-not-finished"
   :replace "(false? final?) :declaration-not-filed"}
 
  {:id :an-undeclared-jurisdiction-is-not-an-uncatalogued-one
   :invariant "`nobody said where` and `nobody read there` are different refusals"
-  :file "src/payroll/nenmatsu.cljc"
+  :file "src/payroll/nenmatsu.kotoba"
   :find "(nil? jurisdiction) :jurisdiction-not-declared"
   :replace "(nil? :never) :jurisdiction-not-declared"}
 
  {:id :a-refusal-is-not-an-answer
   :invariant ":answerable? must not report an absence of an answer as one"
-  :file "src/payroll/nenmatsu.cljc"
+  :file "src/payroll/nenmatsu.kotoba"
   :find ":nenmatsu/answerable? (contains? answers answer)"
   :replace ":nenmatsu/answerable? (some? answer)"}
 
  {:id :a-settlement-claim-is-not-a-verified-settlement
   :invariant "this actor cannot verify an amount it did not read a table for"
-  :file "src/payroll/nenmatsu.cljc"
+  :file "src/payroll/nenmatsu.kotoba"
   :find "              :verified? false"
   :replace "              :verified? true"}
 
  {:id :an-assessment-record-is-not-a-payroll-run
   :invariant "counting one as wages would inflate the figure the ceiling tests"
-  :file "src/payroll/nenmatsu.cljc"
+  :file "src/payroll/nenmatsu.kotoba"
   :find "(= :draft-payroll-run (:op r))"
   :replace "(some? (:op r))"}
 
  {:id :another-years-run-is-not-this-years-wages
   :invariant "the period must name the year being assessed"
-  :file "src/payroll/nenmatsu.cljc"
+  :file "src/payroll/nenmatsu.kotoba"
   :find "(str/starts-with? (str (get-in r [:payload :period])) (str year))"
   :replace "(str/starts-with? (str (get-in r [:payload :period])) \"\")"}
 
  {:id :another-contracts-run-is-not-this-employees-wages
   :invariant "and so must the contract"
-  :file "src/payroll/nenmatsu.cljc"
+  :file "src/payroll/nenmatsu.kotoba"
   :find "(= contract-id (:contract-id r))"
   :replace "(some? (:contract-id r))"}
 
  {:id :a-nenmatsu-refusal-is-a-hard-violation
   :invariant "four of the nine answers are the ABSENCE of one; none may commit"
-  :file "src/payroll/governor.cljc"
+  :file "src/payroll/governor.kotoba"
   :find "       (contains? nenmatsu/refusals answer)"
   :replace "       (contains? #{} answer)"}
 
  {:id :the-assessed-contract-is-the-requests-not-the-proposals
   :invariant "an advisor must not be the thing deciding whose 年末調整 is looked at"
-  :file "src/payroll/governor.cljc"
+  :file "src/payroll/governor.kotoba"
   :find "        assess-contract (when assess?\n                          (some->> (:contract-id request)"
   :replace "        assess-contract (when assess?\n                          (some->> (:contract-id proposal)"}
 
  {:id :an-assessment-must-name-a-year
   :invariant "a blank year is not a year; an assessment nobody can look up is not one"
-  :file "src/payroll/governor.cljc"
+  :file "src/payroll/governor.kotoba"
   :find "       (not (nenmatsu/named? (:year request)))"
   :replace "       (not (some? (:year request)))"}
 
  {:id :the-year-reaches-the-assessment
   :invariant "the year the request named is the year that is assessed"
-  :file "src/payroll/governor.cljc"
+  :file "src/payroll/governor.kotoba"
   :find "                       :year (:year request)"
   :replace "                       :year nil"}
 
  {:id :the-assessment-reads-this-employers-records
   :invariant "the ceiling is tested against records, not against an empty list"
-  :file "src/payroll/governor.cljc"
+  :file "src/payroll/governor.kotoba"
   :find "(store/records-of store (:client-id request))"
   :replace "[]"}
 
  {:id :the-year-end-jurisdiction-is-the-employers
   :invariant "the employer's jurisdiction, never one the request could choose"
-  :file "src/payroll/governor.cljc"
+  :file "src/payroll/governor.kotoba"
   :find "                      {:jurisdiction juris\n                       :contract assess-contract"
   :replace "                      {:jurisdiction (:jurisdiction request)\n                       :contract assess-contract"}
 
  {:id :the-uncatalogued-facet-is-forwarded
   :invariant "an operator learns WHICH facet the catalog is missing"
-  :file "src/payroll/governor.cljc"
+  :file "src/payroll/governor.kotoba"
   :find "               (assoc :taxlaw/out-of-scope\n                      (:taxlaw/out-of-scope (:nenmatsu/taxlaw assessment)))"
   :replace "               (assoc :taxlaw/out-of-scope\n                      nil)"}
 
  {:id :the-ledger-stamp-carries-the-year
   :invariant "an assessment has no period; without the year it cannot be attributed"
-  :file "src/payroll/actor.cljc"
+  :file "src/payroll/actor.kotoba"
   :find "    (some? (:year request)) (assoc :year (:year request))))"
   :replace "    (some? nil) (assoc :year (:year request))))"}
 
  {:id :the-year-end-route-is-routed
   :invariant "the route exists — without it the reading of 第百九十条 reaches nothing"
-  :file "src/payroll/edge/endpoints.cljc"
+  :file "src/payroll/edge/endpoints.kotoba"
   :find "(= path \"/api/year-end-adjustment\")"
   :replace "(= path \"/api/year-end-adjustment-disabled\")"}
 
  {:id :the-year-end-route-needs-an-allowlist
   :invariant "an unconfigured deployment is 503, not an open endpoint"
-  :file "src/payroll/edge/endpoints.cljc"
+  :file "src/payroll/edge/endpoints.kotoba"
   :find "     (nil? allowlist)\n     {:status 503 :body {:ok false :error \"no allow-list configured\"}}\n\n     (nil? (employer-for allowlist caller-did))\n     {:status 403 :body {:ok false :error \"caller not permitted\"}}\n\n     :else\n     (let [{:keys [fields error]} (parse-year-end-body raw-body)]"
   :replace "     (nil? nil)\n     {:status 503 :body {:ok false :error \"no allow-list configured\"}}\n\n     (nil? (employer-for allowlist caller-did))\n     {:status 403 :body {:ok false :error \"caller not permitted\"}}\n\n     :else\n     (let [{:keys [fields error]} (parse-year-end-body raw-body)]"}
 
  {:id :the-year-end-route-refuses-an-unlisted-caller
   :invariant "an unlisted DID cannot ask about anyone's 年末調整"
-  :file "src/payroll/edge/endpoints.cljc"
+  :file "src/payroll/edge/endpoints.kotoba"
   :find "     (nil? (employer-for allowlist caller-did))\n     {:status 403 :body {:ok false :error \"caller not permitted\"}}\n\n     :else\n     (let [{:keys [fields error]} (parse-year-end-body raw-body)]"
   :replace "     (nil? nil)\n     {:status 403 :body {:ok false :error \"caller not permitted\"}}\n\n     :else\n     (let [{:keys [fields error]} (parse-year-end-body raw-body)]"}
 
  {:id :the-year-end-body-cannot-name-an-employer
   :invariant "whose 年末調整 this is comes from the verified DID"
-  :file "src/payroll/edge/endpoints.cljc"
+  :file "src/payroll/edge/endpoints.kotoba"
   :find "      (some #(contains? m %) employer-naming-keys)\n      {:error (str \"the employer is taken from the verified caller, not the\"\n                   \" request body\")}\n\n      (not (and (string? (:year m)) (seq (.trim (:year m)))))"
   :replace "      (some #(contains? #{} %) employer-naming-keys)\n      {:error (str \"the employer is taken from the verified caller, not the\"\n                   \" request body\")}\n\n      (not (and (string? (:year m)) (seq (.trim (:year m)))))"}
 
  {:id :a-non-boolean-declaration-is-refused-at-the-edge
   :invariant "a string is not a declaration, and the caller who sent one is told"
-  :file "src/payroll/edge/endpoints.cljc"
+  :file "src/payroll/edge/endpoints.kotoba"
   :find "        boolish? (fn [k] (or (nil? (get m k)) (boolean? (get m k))))"
   :replace "        boolish? (fn [k] (or (nil? (get m k)) (some? (get m k))))"}
 
  {:id :not-assessed-is-not-an-answer
   :invariant "a verdict that carried no assessment must not print as answerable"
-  :file "src/payroll/edge/endpoints.cljc"
+  :file "src/payroll/edge/endpoints.kotoba"
   :find "    {:answer :not-assessed :answerable? false}))"
   :replace "    {:answer :not-assessed :answerable? true}))"}
 
  {:id :the-ledger-names-the-op
   :invariant "an assessment record must not render as a payroll run that paid nothing"
-  :file "src/payroll/edge/endpoints.cljc"
+  :file "src/payroll/edge/endpoints.kotoba"
   :find "                                :op (get-in e [:record :op])"
   :replace "                                :op nil"}
 
  {:id :the-contract-history-names-the-op
   :invariant "and neither must it in one contract's run history"
-  :file "src/payroll/edge/endpoints.cljc"
+  :file "src/payroll/edge/endpoints.kotoba"
   :find "                                            :op (get-in % [:record :op])"
   :replace "                                            :op nil"}
 
@@ -481,13 +481,13 @@
 
  {:id :the-year-end-facet-is-the-one-taxlaw-carries
   :invariant "the facet this repo names is the facet the pinned catalog holds"
-  :file "src/payroll/nenmatsu.cljc"
+  :file "src/payroll/nenmatsu.kotoba"
   :find "  :jurisdiction/year-end-adjustment)"
   :replace "  :jurisdiction/year-end-adjustment-v2)"}
 
  {:id :the-catalogs-own-reason-reaches-the-operator
   :invariant "`the US has no year-end adjustment` is not `we never heard of the US`"
-  :file "src/payroll/nenmatsu.cljc"
+  :file "src/payroll/nenmatsu.kotoba"
   :find "                             (or (:taxlaw/why law)"
   :replace "                             (or nil"}
  ;; --------------------------------------------------------------------------
@@ -503,7 +503,7 @@
  ;; it moving, the amount check is decoration.
  {:id :pension-rate-is-the-statutory-one
   :invariant "厚年法 第八十一条第四項 の 千分の百八十三 が実際に使われている"
-  :file "src/payroll/shakai_hoken.cljc"
+  :file "src/payroll/shakai_hoken.kotoba"
   :find "      :rate/per-mille 183"
   :replace "      :rate/per-mille 184"}
 
@@ -511,7 +511,7 @@
  ;; employee's pension contribution.
  {:id :the-employee-bears-half-of-the-pension-premium
   :invariant "厚年法 第八十二条第一項 の折半（分母 2000 = 1000 × 2）"
-  :file "src/payroll/shakai_hoken.cljc"
+  :file "src/payroll/shakai_hoken.kotoba"
   :find "{:numerator (* srm per-mille) :denominator 2000 :unit :yen}"
   :replace "{:numerator (* srm per-mille) :denominator 1000 :unit :yen}"}
 
@@ -519,21 +519,21 @@
  ;; by strictly less than one yen, so an amount exactly one yen out is wrong.
  {:id :the-one-yen-bound-is-strict
   :invariant "端数処理規則を読まずに言える限界は < であって <= ではない"
-  :file "src/payroll/shakai_hoken.cljc"
+  :file "src/payroll/shakai_hoken.kotoba"
   :find "  (< (abs* (- (* declared denominator) numerator)) denominator))"
   :replace "  (<= (abs* (- (* declared denominator) numerator)) denominator))"}
 
  ;; The whole point: an unobserved 資格 is NOT `this worker is not insured`.
  {:id :unobserved-coverage-is-not-not-covered
   :invariant "資格未登録は「該当しない」ではない（未観測は合格ではない）"
-  :file "src/payroll/shakai_hoken.cljc"
+  :file "src/payroll/shakai_hoken.kotoba"
   :find "                 (nil? covered) :coverage-not-observed"
   :replace "                 (nil? covered) :not-covered"}
 
  ;; A registration that is the STRING "true" is not a registration.
  {:id :a-string-true-is-not-a-registration
   :invariant "boolean? による正規化（typo で買える合格を作らない）"
-  :file "src/payroll/shakai_hoken.cljc"
+  :file "src/payroll/shakai_hoken.kotoba"
   :find "  (when (boolean? x) x))"
   :replace "  x)"}
 
@@ -541,7 +541,7 @@
  ;; unaccounted-for contribution commit.
  {:id :not-accounted-for-is-not-an-answer
   :invariant "計上なしは回答ではない（answers 集合に入れてはならない）"
-  :file "src/payroll/shakai_hoken.cljc"
+  :file "src/payroll/shakai_hoken.kotoba"
   :find "  #{:accounted-for :not-covered})"
   :replace "  #{:accounted-for :not-covered :not-accounted-for})"}
 
@@ -549,7 +549,7 @@
  ;; depends on the declared amount being whole yen.
  {:id :a-fraction-of-a-yen-is-not-an-accounting
   :invariant "計上額は円単位（円未満の端数を受け付けない）"
-  :file "src/payroll/shakai_hoken.cljc"
+  :file "src/payroll/shakai_hoken.kotoba"
   :find "  (and (number? x) (not (neg? x)) (zero? (mod x 1))))"
   :replace "  (and (number? x) (not (neg? x))))"}
 
@@ -557,7 +557,7 @@
  ;; comparison is chronological comparison.
  {:id :the-month-format-is-a-real-month
   :invariant "月分は YYYY-MM のみ（13 月を通さない）"
-  :file "src/payroll/shakai_hoken.cljc"
+  :file "src/payroll/shakai_hoken.kotoba"
   :find "  #\"^\\d{4}-(0[1-9]|1[0-2])$\")"
   :replace "  #\"^\\d{4}-\\d{2}$\")"}
 
@@ -565,28 +565,28 @@
  ;; before it must be refused rather than rated at 183.
  {:id :a-month-before-the-transcribed-row-is-refused
   :invariant "転記していない料率行の月分に 183 を当てない"
-  :file "src/payroll/shakai_hoken.cljc"
+  :file "src/payroll/shakai_hoken.kotoba"
   :find "                      (neg? (compare month (:rate/applies-from-month rate))))"
   :replace "                      (and false (compare month (:rate/applies-from-month rate))))"}
 
  ;; The wiring: rules 12-14 actually reach the verdict.
  {:id :social-insurance-refusals-reach-the-verdict
   :invariant "shakai-hoken の refusal が HARD violation になる"
-  :file "src/payroll/governor.cljc"
+  :file "src/payroll/governor.kotoba"
   :find "     (if hoken (social-insurance-violations hoken) [])"
   :replace "     (if false (social-insurance-violations hoken) [])"}
 
  ;; The rule NAMES matter: an operator reads them.
  {:id :the-coverage-rule-is-named-not-unclassified
   :invariant "各 refusal が固有の rule 名を持つ"
-  :file "src/payroll/governor.cljc"
+  :file "src/payroll/governor.kotoba"
   :find "   :coverage-not-observed :social-insurance-coverage-not-observed"
   :replace "   :coverage-not-observed-typo :social-insurance-coverage-not-observed"}
 
  ;; 社会保険 is not tax, and the verdict must not file it under one.
  {:id :social-insurance-is-not-nested-under-tax
   :invariant "verdict の :social-insurance は :tax の子ではない"
-  :file "src/payroll/governor.cljc"
+  :file "src/payroll/governor.kotoba"
   ;; The anchor moved on 2026-08-25: `:wage-basis` was inserted ahead of
   ;; `:social-insurance` in the verdict's `:extra`, so the old `:find`
   ;; (`{:social-insurance`, with the opening brace) no longer occurs. A
@@ -598,7 +598,7 @@
  ;; 仕訳: the identity that catches a contribution deducted and not posted.
  {:id :the-journal-identity-counts-social-insurance
   :invariant "gross = 所得税 + 社会保険 + 雇用保険 + net"
-  :file "src/payroll/shiwake.cljc"
+  :file "src/payroll/shiwake.kotoba"
   :find "      (not= gross (+ income-tax-withheld si-total ei-total net))"
   :replace "      (not= gross (+ income-tax-withheld net))"}
 
@@ -606,7 +606,7 @@
  ;; and 労働保険徴収法 (annual, for a 保険年度) are different liabilities.
  {:id :the-two-new-liabilities-are-two
   :invariant "社会保険料預り金 と 雇用保険料預り金 を一本にまとめない"
-  :file "src/payroll/shiwake.cljc"
+  :file "src/payroll/shiwake.kotoba"
   :find "                 (pos? ei-total)\n                 (conj {:side :cr :account employment-insurance"
   :replace "                 (and false (pos? ei-total))\n                 (conj {:side :cr :account employment-insurance"}
 
@@ -620,14 +620,14 @@
  ;; this is the rule that notices the number ignores a registered fact.
  {:id :a-registered-premium-fact-holds-the-run
   :invariant "gross が無視している登録事実があれば run は保留される"
-  :file "src/payroll/governor.cljc"
+  :file "src/payroll/governor.kotoba"
   :find "     (if (and basis (not (:chingin/certifiable? basis)))"
   :replace "     (if (and basis false (not (:chingin/certifiable? basis)))"}
 
  ;; An omitted report and a satisfied rule look the same.
  {:id :every-draft-verdict-reports-the-wage-basis
   :invariant "月給 run で勤怠が読まれていないことが verdict に出る"
-  :file "src/payroll/governor.cljc"
+  :file "src/payroll/governor.kotoba"
   :find "\n         :wage-basis\n         (cond"
   :replace "\n         :wage-basis-omitted\n         (cond"}
 
@@ -635,28 +635,28 @@
  ;; number in every view that reads `:figure/amount` first.
  {:id :a-numberless-provenance-may-not-carry-a-number
   :invariant ":unknown / :held / :not-applicable は金額を持てない"
-  :file "src/payroll/provenance.cljc"
+  :file "src/payroll/provenance.kotoba"
   :find "  (when (and (some? amount) (contains? numberless provenance))"
   :replace "  (when (and false (some? amount) (contains? numberless provenance))"}
 
  ;; A summary somebody types into a payment must not under-report.
  {:id :a-total-refuses-rather-than-under-reporting
   :invariant "未確定を含む合計は合計ではない"
-  :file "src/payroll/provenance.cljc"
+  :file "src/payroll/provenance.kotoba"
   :find "    (if (seq blocked)"
   :replace "    (if (and false (seq blocked))"}
 
  ;; A blank cell is read as zero by the person opening it.
  {:id :an-unknown-figure-is-never-an-empty-cell
   :invariant "未確定の金額は空欄ではなく「未確定」と印字される"
-  :file "src/payroll/artifact/text.cljc"
+  :file "src/payroll/artifact/text.kotoba"
   :find "    (:unknown :held) unknown-cell"
   :replace "    (:unknown :held) \"\""}
 
  ;; The evidence floor. A checker handed nothing finds nothing.
  {:id :an-empty-accessibility-scan-is-not-a-pass
   :invariant "走査対象ゼロは合格ではない"
-  :file "src/payroll/ui/a11y.cljc"
+  :file "src/payroll/ui/a11y.kotoba"
   :find "  (and (empty? (:a11y/findings result))\n       (pos? (get-in result [:a11y/scanned :elements] 0))))"
   :replace "  (empty? (:a11y/findings result)))"}
 
@@ -664,7 +664,7 @@
  ;; operator who cannot see the colour.
  {:id :state-is-never-conveyed-by-colour-alone
   :invariant "状態クラスを持つ要素はテキストか aria-label を持つ"
-  :file "src/payroll/ui/a11y.cljc"
+  :file "src/payroll/ui/a11y.kotoba"
   ;; The `:when` clause and not the `finding` call: wrapping the call in a
   ;; `(when false …)` leaves the form unbalanced, the reader fails, and the
   ;; harness scores it UNMEASURED — correctly, since a mutation that breaks
@@ -675,7 +675,7 @@
  ;; A reconciliation over zero compared runs would print like a perfect month.
  {:id :a-reconciliation-over-nothing-is-not-a-pass
   :invariant "突合できた run が 0 件なら reconciled? は false"
-  :file "src/payroll/mf/reconcile.cljc"
+  :file "src/payroll/mf/reconcile.kotoba"
   :find "            (zero? compared)"
   :replace "            (and false (zero? compared))"}
 
@@ -683,21 +683,21 @@
  ;; would score as agreement.
  {:id :a-held-figure-is-never-scored-as-agreement
   :invariant "当 actor が保留した項目は「一致」にならない"
-  :file "src/payroll/mf/reconcile.cljc"
+  :file "src/payroll/mf/reconcile.kotoba"
   :find "      (assoc base :field/verdict :not-comparable\n             :field/why (str label \"について当 actor は数字を出していない: \""
   :replace "      (assoc base :field/verdict :agree\n             :field/why (str label \"について当 actor は数字を出していない: \""}
 
  ;; No column name has been checked against a real export.
  {:id :no-moneyforward-column-is-marked-verified
   :invariant "MF の列名はすべて未検証である"
-  :file "src/payroll/mf/schema.cljc"
+  :file "src/payroll/mf/schema.kotoba"
   :find "  [{:mf/column \"従業員番号\" :mf/to :employee-number :mf/kind :identity\n    :mf/required? true :mf/verified? false}"
   :replace "  [{:mf/column \"従業員番号\" :mf/to :employee-number :mf/kind :identity\n    :mf/required? true :mf/verified? true}"}
 
  ;; The registration layer is not a second governor.
  {:id :registration-does-not-default-a-coverage-flag
   :invariant "未登録の被保険者資格を false で埋めない"
-  :file "src/payroll/touroku.cljc"
+  :file "src/payroll/touroku.kotoba"
   :find "         :touroku/record (merge m stamp)"
   :replace "         :touroku/record (merge {:employment/health-insurance-insured? false} m stamp)"}
 
@@ -705,14 +705,14 @@
  ;; header trustworthy by nothing.
  {:id :a-non-loopback-bind-needs-an-acknowledgement
   :invariant "loopback 以外への bind は PAYROLL_TRUST_FORWARDED を要する"
-  :file "src/payroll/host/config.cljc"
+  :file "src/payroll/host/config.kotoba"
   :find "      (and (not loopback?) (not forwarded-ack?))"
   :replace "      (and false (not loopback?) (not forwarded-ack?))"}
 
  ;; The one thing on this surface a page on another origin could trigger.
  {:id :the-console-refuses-a-cross-origin-post
   :invariant "別 origin からのフォーム POST は拒否される"
-  :file "src/payroll/edge/console.cljc"
+  :file "src/payroll/edge/console.kotoba"
   :find "    (and (= :post method) (not (same-origin? origin self-origin)))"
   :replace "    (and false (= :post method) (not (same-origin? origin self-origin)))"}
 
@@ -720,7 +720,7 @@
  ;; most expensive kind of wrong this repository can be.
  {:id :the-payslip-does-not-claim-to-be-a-statutory-form
   :invariant "給与支払明細書は法定様式であると主張しない"
-  :file "src/payroll/artifact/payslip.cljc"
+  :file "src/payroll/artifact/payslip.kotoba"
   :find "      [:statutory_form false]"
   :replace "      [:statutory_form true]"}
 
@@ -741,7 +741,7 @@
  ;; records, and on the ledger that approves the month's second payroll run.
  {:id :an-unreadable-chain-refuses-rather-than-returning-what-it-got
   :invariant "読めない chain は空の chain ではない（entries-of は fail closed）"
-  :file "src/payroll/store/kotobase.cljc"
+  :file "src/payroll/store/kotobase.kotoba"
   :find "    (if (:chain/complete? chain)"
   :replace "    (if (or true (:chain/complete? chain))"}
 
@@ -749,7 +749,7 @@
  ;; its alteration parsed as EDN and walked as a chain node.
  {:id :a-block-is-verified-against-the-address-it-was-asked-for
   :invariant "返ってきた bytes の内容アドレスを照合する"
-  :file "src/payroll/store/kotobase.cljc"
+  :file "src/payroll/store/kotobase.kotoba"
   :find "        (if (not= cid actual)"
   :replace "        (if (and false (not= cid actual))"}
 
@@ -758,7 +758,7 @@
  ;; one.
  {:id :an-append-against-an-unwalkable-chain-does-not-happen
   :invariant "辿れない chain に追記しない"
-  :file "src/payroll/store/kotobase.cljc"
+  :file "src/payroll/store/kotobase.kotoba"
   :find "                (not (:chain/complete? chain))"
   :replace "                (and false (not (:chain/complete? chain)))"}
 
@@ -774,7 +774,7 @@
  ;; harness exists to catch. It now mutates the check the suite does reach.
  {:id :the-idempotency-tag-comes-from-a-keyed-provider
   :invariant "冪等性の tag は鍵付きプロバイダから来る（無鍵ハッシュは確認オラクル）"
-  :file "src/payroll/store/kotobase.cljc"
+  :file "src/payroll/store/kotobase.kotoba"
   :find "                     (not (and (blind/configured? blind-index)"
   :replace "                     (not (and (or true (blind/configured? blind-index))"}
 
@@ -782,7 +782,7 @@
  ;; this happens, and it passes every other check.
  {:id :the-blind-index-key-is-not-the-envelope-key
   :invariant "blind index の鍵は封筒の鍵と別でなければならない"
-  :file "src/payroll/kotobase/blind_index.cljc"
+  :file "src/payroll/kotobase/blind_index.kotoba"
   :file2-note "mutates the predicate itself, so the form stays balanced"
   :find "  (not (or (identical? b envelope*)"
   :replace "  (not (and (identical? b envelope*)"}
@@ -791,7 +791,7 @@
  ;; write; one whose tag is constant collapses two contracts into one.
  {:id :an-unstable-blind-index-is-refused-at-construction
   :invariant "tag が安定しない・定数のプロバイダは構成時に拒否される"
-  :file "src/payroll/kotobase/blind_index.cljc"
+  :file "src/payroll/kotobase/blind_index.kotoba"
   :find "               (= (:index/tag a) (:index/tag a'))"
   :replace "               (or true (= (:index/tag a) (:index/tag a')))"}
 
@@ -800,7 +800,7 @@
  ;; be inside a process that ends when it ends.
  {:id :the-cutover-gate-needs-a-store-that-can-testify-to-its-durability
   :invariant "MemStore は3サイクル揃っていても cutover gate を満たさない"
-  :file "src/payroll/cutover.cljc"
+  :file "src/payroll/cutover.kotoba"
   :find "        durable? (and (= :kotobase (:evidence/mode evidence))\n                      (true? (:evidence/survives-process-restart? evidence)))"
   :replace "        durable? (or true (= :kotobase (:evidence/mode evidence))\n                      (true? (:evidence/survives-process-restart? evidence)))"}
 
@@ -808,7 +808,7 @@
  ;; operator actions, and the gate has to require both.
  {:id :the-cutover-read-back-needs-every-chain-walked-to-its-end
   :invariant "一つでも辿れない chain があれば読み戻しの条件は満たされない"
-  :file "src/payroll/cutover.cljc"
+  :file "src/payroll/cutover.kotoba"
   :find "          :gate/met? (and durable? readable? read-back?"
   :replace "          :gate/met? (and durable? (or true readable?) read-back?"}
 
@@ -817,7 +817,7 @@
  ;; failure this repository keeps finding.
  {:id :a-projection-over-nothing-is-not-a-successful-projection
   :invariant "行が0件の投影は :nothing-to-do であって :ok ではない"
-  :file "src/payroll/projection/catalog.cljc"
+  :file "src/payroll/projection/catalog.kotoba"
   :find "      {:project/status :nothing-to-do :project/appended 0 :project/skipped []"
   :replace "      {:project/status :ok :project/appended 0 :project/skipped []"}
 
@@ -825,7 +825,7 @@
  ;; appended to: every re-run would load the payroll run again.
  {:id :a-driver-that-cannot-answer-existing-keys-is-not-written-to
   :invariant "既存の鍵を答えられない driver には追記しない"
-  :file "src/payroll/projection/catalog.cljc"
+  :file "src/payroll/projection/catalog.kotoba"
   :find "      (not= :ok (:catalog/status existing))"
   :replace "      (and false (not= :ok (:catalog/status existing)))"}
 
@@ -833,7 +833,7 @@
  ;; leaves a caller believing the column was never there.
  {:id :a-projected-row-refuses-rather-than-dropping-an-identifier
   :invariant "投影行は禁止列を黙って落とさず拒否する"
-  :file "src/payroll/sensitive.cljc"
+  :file "src/payroll/sensitive.kotoba"
   :find "  (blocked? (map :sensitive/key forbidden-outside) k))"
   :replace "  (and false (blocked? (map :sensitive/key forbidden-outside) k)))"}
 
@@ -841,7 +841,7 @@
  ;; re-encoded the string would make every halfwidth katakana three bytes.
  {:id :the-host-writes-zengin-bytes-without-re-encoding-them
   :invariant "固定長ファイルの bytes は UTF-8 で再エンコードされない"
-  :file "src/payroll/host/jvm.clj"
+  :file "src/payroll/host/jvm.kotoba"
   :find "    (sequential? body) (byte-array (map #(unchecked-byte (bit-and (int %) 0xFF))"
   :replace "    (sequential? body) (byte-array (map #(unchecked-byte (bit-and (int 63) 0xFF))"}
 
@@ -850,7 +850,7 @@
  ;; failure this namespace exists to prevent would pass every length check.
  {:id :a-character-with-no-single-byte-encoding-is-refused
   :invariant "1バイトにならない文字は置き換えず拒否する"
-  :file "src/payroll/artifact/zengin.cljc"
+  :file "src/payroll/artifact/zengin.kotoba"
   :find "    (if (seq problems)
       {:bytes/status :refused :bytes/problems problems"
   :replace "    (if (and false (seq problems))
@@ -876,7 +876,7 @@
  ;; second copy on this stream is a second answer to `which paper is current`.
  {:id :a-retried-registration-is-one-registration
   :invariant "同じ内容の再送は :duplicate であって二度目の登録ではない"
-  :file "src/payroll/juminzei.cljc"
+  :file "src/payroll/juminzei.kotoba"
   :find "      (and same (= same record))"
   :replace "      (and false same (= same record))"}
 
@@ -884,7 +884,7 @@
  ;; どちらの月割額を控除すべきか誰にも答えられない。
  {:id :a-correction-must-name-what-it-replaces
   :invariant "改訂番号が1以上なら :notice/replaces を名指ししなければならない"
-  :file "src/payroll/juminzei.cljc"
+  :file "src/payroll/juminzei.kotoba"
   :find "      (and (pos? revision) (str/blank? (str replaces)))"
   :replace "      (and false (pos? revision) (str/blank? (str replaces)))"}
 
@@ -892,7 +892,7 @@
  ;; the backend happened to hand back last, and nothing reports the fork.
  {:id :the-same-notice-id-with-different-content-is-refused
   :invariant "同じ :notice/id が別の内容で登録されることはない"
-  :file "src/payroll/juminzei.cljc"
+  :file "src/payroll/juminzei.kotoba"
   :find "      same\n      {:registration/status :refused\n       :registration/reason :conflicting-content"
   :replace "      (and false same)\n      {:registration/status :refused\n       :registration/reason :conflicting-content"}
 
@@ -902,7 +902,7 @@
  ;; under one id, the exact fork `notice-id` exists to prevent.
  {:id :a-notice-is-not-appended-against-an-unreadable-history
   :invariant "末尾まで読めない履歴に追記しない（読めない履歴は空の履歴ではない）"
-  :file "src/payroll/juminzei.cljc"
+  :file "src/payroll/juminzei.kotoba"
   :find "    (if-not (:read/ok? read*)"
   :replace "    (if-not (or true (:read/ok? read*))"}
 
@@ -912,7 +912,7 @@
  ;; entirely lawful.
  {:id :a-decision-notices-twelve-months-must-sum-to-its-annual-total
   :invariant "決定通知書の12か月の月割額は年税額に一致する"
-  :file "src/payroll/juminzei.cljc"
+  :file "src/payroll/juminzei.kotoba"
   :find "      (and summed (not= summed (:notice/annual-total m)))"
   :replace "      (and false summed (not= summed (:notice/annual-total m)))"}
 
@@ -922,7 +922,7 @@
  ;; whoever asks about another.
  {:id :the-notice-chain-is-employer-scoped
   :invariant "通知の読み出しは :notice/employer で絞られる"
-  :file "src/payroll/store/kotobase.cljc"
+  :file "src/payroll/store/kotobase.kotoba"
   :find "(filterv #(= client-id (:notice/employer %)) (entries-of s :juminzei))"
   :replace "(filterv (constantly true) (entries-of s :juminzei))"}
 
@@ -934,7 +934,7 @@
  ;; breaks the undeclared-column half, and they are different guards.)
  {:id :a-projected-row-refuses-an-undeclared-column
   :invariant "表が宣言していない列は黙って落とさず拒否する"
-  :file "src/payroll/projection/schema.cljc"
+  :file "src/payroll/projection/schema.kotoba"
   :find "        undeclared (vec (remove (column-names table) (map name (keys row))))"
   :replace "        undeclared (vec (remove (constantly true) (map name (keys row))))"}
 
@@ -946,7 +946,7 @@
  ;; from the only other side it can fail from.
  {:id :a-notice-projection-over-nothing-does-not-reach-the-ok-path
   :invariant "行が0件なら :nothing-to-do の枝に入る（:ok の枝には落ちない）"
-  :file "src/payroll/projection/catalog.cljc"
+  :file "src/payroll/projection/catalog.kotoba"
   :find "      (empty? rows)"
   :replace "      (and false (empty? rows))"}
 
@@ -961,7 +961,7 @@
  ;; and it is the half that tells the reader something was removed at all.
  {:id :redaction-counts-what-it-dropped
   :invariant "落とした鍵は数えて :report/redacted-keys で報告する"
-  :file "src/payroll/operations.cljc"
+  :file "src/payroll/operations.kotoba"
   :find "(assoc cleaned :report/redacted-keys @n)"
   :replace "(assoc cleaned :report/redacted-keys 0)"}
 
@@ -970,7 +970,7 @@
  ;; prefecture being a REGISTERED fact rather than a defaulted one.
  {:id :an-untranscribed-prefecture-fails-closed
   :invariant "転記していない支部の料率は隣の支部で代用されない"
-  :file "src/payroll/rates.cljc"
+  :file "src/payroll/rates.kotoba"
   :find "                                          (or (= :all (:rate/prefecture r))"
   :replace "                                          (or true (= :all (:rate/prefecture r))"}
 
@@ -993,7 +993,7 @@
  ;; produce no payslip figure between them while it is true.
  {:id :the-payslip-reads-the-obligation-off-the-contract
   :invariant "登録された特別徴収の区分が明細の住民税の行に届く（未登録と同じ扱いにしない）"
-  :file "src/payroll/edge/console.cljc"
+  :file "src/payroll/edge/console.kotoba"
   :find "                                          :obligation (:employment/resident-tax-obligation\n                                                       contract)"
   :replace "                                          :obligation (:employment/resident-tax-obligation\n                                                       nil)"}
 ]

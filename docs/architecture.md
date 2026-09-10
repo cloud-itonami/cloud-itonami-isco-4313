@@ -100,7 +100,7 @@ rendered markup.
 | `payroll.host.config` | may this deployment listen on a socket at all |
 | `payroll.host.jvm` | the socket |
 | `payroll.rates` | which rate or 税額表 row applied in this month, and which are not transcribed |
-| `payroll.rates.monthly-2026` | **generated** — the 月額表 as data, pinned by SHA-256 (`tools/import_nta_2026.clj`) |
+| `payroll.rates.monthly-2026` | **generated** — the 月額表 as data, pinned by SHA-256 (`tools/import_nta_2026.kotoba`) |
 | `payroll.store.kotobase` | can this ledger survive the process that wrote it |
 | `payroll.kotobase.*` | envelope, blind index, transport contract — the payload is never written in the clear |
 | `payroll.projection.*` | the analysis-side copy, and the permission this deployment does not have |

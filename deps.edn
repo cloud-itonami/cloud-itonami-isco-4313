@@ -107,8 +107,8 @@
          :main-opts ["-m" "cognitect.test-runner"]}
 
   ;; The 源泉徴収税額表 importer. Apache POI reads the 国税庁's legacy BIFF8
-  ;; workbook; `tools/import_nta_2026.clj` turns one pinned .xls into
-  ;; `src/payroll/rates/monthly_2026.cljc`.
+  ;; workbook; `tools/import_nta_2026.kotoba` turns one pinned .xls into
+  ;; `src/payroll/rates/monthly_2026.kotoba`.
   ;;
   ;; It is an ALIAS and not a dependency, and that distinction is the whole
   ;; point: POI is a build-time tool, `tools/` is not on `:paths`, and `:deps`

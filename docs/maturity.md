@@ -121,9 +121,9 @@ under rows that were already `implemented ✅`, and it moves no column:
   `:source/not-read`.
 - **源泉徴収税額表（月額表）.** All 231 bands, the nine printed threshold
   rows, the eleven excess-rate segments and the 7人超 deduction. Not
-  transcribed by hand — `tools/import_nta_2026.clj` READ them out of the
+  transcribed by hand — `tools/import_nta_2026.kotoba` READ them out of the
   国税庁 workbook, which is pinned by SHA-256, and wrote
-  `src/payroll/rates/monthly_2026.cljc`. `payroll.rates/withholding-table`
+  `src/payroll/rates/monthly_2026.kotoba`. `payroll.rates/withholding-table`
   reads that file; the two vectors are `identical?` and a test asserts it,
   so a regeneration cannot leave them disagreeing.
 
