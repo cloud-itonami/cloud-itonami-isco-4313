@@ -88,7 +88,7 @@
 ;;     twice; entering the branch and returning from it are the two ways it
 ;;     can fail, and each has its own entry.
 ;;
-;; Nothing in this round was UNMEASURED. `nbb tools/check-mutations.cljk`
+;; Nothing in this round was UNMEASURED. `kbb --backend sci tools/check-mutations.cljk`
 ;; reports 104 mutations, every `:find` occurring exactly once.
 ;;
 ;; ## Measured 2026-08-25

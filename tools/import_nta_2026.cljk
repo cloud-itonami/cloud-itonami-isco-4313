@@ -13,7 +13,7 @@
 
   So the figures are never typed. They are READ out of the workbook the
   国税庁 published, by this program, and the workbook is PINNED by SHA-256.
-  Regenerating is `clojure -M:importer`; the diff being empty is the check
+  Regenerating is `kbb -M:importer`; the diff being empty is the check
   that the file on disk is the file this program produces.
 
   ## What this program refuses to do
@@ -57,7 +57,7 @@
   `:pin/sha256` is the whole point. `:pin/url` is where it came from and
   `:pin/retrieved-at` is when, but neither of those identifies BYTES — a URL
   serves whatever is behind it today, and the 国税庁 replaces these files in
-  place when a 告示 is amended. The digest is what makes `clojure -M:importer`
+  place when a 告示 is amended. The digest is what makes `kbb -M:importer`
   a reproducible step rather than a fetch."
   {:pin/sha256 "50aafa072df1bb6b6aa253a021f7cc246265c3f2393f9988ee01ad121bc4f310"
    :pin/bytes 81408
@@ -508,7 +508,7 @@
    (str
    ";; -*- GENERATED FILE — DO NOT EDIT BY HAND -*-\n"
    ";;\n"
-   ";; Produced by `clojure -M:importer` (tools/import_nta_2026.cljk) from the\n"
+   ";; Produced by `kbb -M:importer` (tools/import_nta_2026.cljk) from the\n"
    ";; 国税庁 workbook pinned by the SHA-256 in `provenance` below. Every figure\n"
    ";; here was READ out of that workbook; none was typed. To change it, change\n"
    ";; the importer or the pin and regenerate — an edit made here is an edit the\n"
@@ -625,7 +625,7 @@
   (System/exit 1))
 
 (defn -main
-  "`clojure -M:importer [workbook] [output]`.
+  "`kbb -M:importer [workbook] [output]`.
 
   Exits non-zero and writes nothing on a digest mismatch or on any structural
   failure. Both are printed with the reason named, because 'the importer
