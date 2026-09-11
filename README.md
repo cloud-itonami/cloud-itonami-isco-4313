@@ -147,7 +147,7 @@ the refusals, and the response names the ones that are neither `:posted` nor
 has to look at. An unreadable body appends **nothing**: half a batch is less
 trustworthy than none.
 
-Thirteen mutations cover the route (`nbb tools/mutate.cljs`); the table's
+Thirteen mutations cover the route (`nbb tools/mutate.cljk`); the table's
 header states that it covers the route and not the actor.
 
 | 4311 answered | fact records |
@@ -212,7 +212,7 @@ request carries `:client-id`, and the shared rule previously read one key
 off both sides. Generalising the library was the fix; copying the rule a
 377th time was not.
 
-`test/payroll/conformance_test.clj` pins every disposition against
+`test/payroll/conformance_test.cljk` pins every disposition against
 `gov/conformance-failures`. **Measured: re-injecting that drift leaves all
 14 pre-existing tests green and reddens only the conformance suite.**
 
@@ -438,8 +438,8 @@ loudly: a partially transcribed banded table answers for the salaries somebody
 happened to type and refuses for the rest, which is worse than refusing for all
 of them, because the operator learns to trust it.
 
-That objection is answered by there being no subset. `tools/import_nta_2026.clj`
-**reads** the 国税庁 workbook and writes `src/payroll/rates/monthly_2026.cljc`:
+That objection is answered by there being no subset. `tools/import_nta_2026.cljk`
+**reads** the 国税庁 workbook and writes `src/payroll/rates/monthly_2026.cljk`:
 231 contiguous bands, eight dependant columns each, nine printed threshold
 rows, eleven excess-rate segments and the 7人超 deduction. About 2,000 figures.
 None of them was typed by a human, and none of them is typed in
@@ -1098,7 +1098,7 @@ which the second time is a second payment. So there is a **`DatomicStore` over
 `langchain.db`**, built on
 [`kotoba-lang/langchain-store`](https://github.com/kotoba-lang/langchain-store)
 (EDN-blob codec, identity schema, seq-keyed streams — not re-hand-rolled here),
-and `test/payroll/store_contract_test.clj` runs **every** assertion against both
+and `test/payroll/store_contract_test.cljk` runs **every** assertion against both
 out of one `backends` map, with an evidence floor asserting that map still holds
 two distinct types. A contract test that silently degrades to one backend passes
 forever.
@@ -1123,9 +1123,9 @@ the contract test exists to end.
 
 ## The HTTP surface — six API routes, plus the console
 
-`src/payroll/edge/endpoints.cljc`, portable `.cljc`, `{:status n :body {...}}`
+`src/payroll/edge/endpoints.cljk`, portable `.cljc`, `{:status n :body {...}}`
 in and out, no host effects and no framework. `payroll.host.jvm` mounts it,
-and `src/payroll/edge/console.cljc` adds the operator screens on the same
+and `src/payroll/edge/console.cljk` adds the operator screens on the same
 three gates — a console with its own validation path would be a second place
 for the rules to live, and the second place is the one that drifts.
 

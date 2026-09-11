@@ -49,7 +49,7 @@
   for every input, on the stated ground that a partially transcribed banded
   table answers for the salaries somebody happened to type. It is now
   transcribed WHOLE, from `payroll.rates.monthly-2026` — a generated file
-  produced by `tools/import_nta_2026.clj` from the 国税庁 workbook, pinned
+  produced by `tools/import_nta_2026.cljk` from the 国税庁 workbook, pinned
   by SHA-256. 231 bands, nine printed threshold rows, the eleven
   excess-rate segments and the 7人超 deduction, none of them typed by hand.
 
@@ -435,7 +435,7 @@
    :table/source :nta/withholding-2026
    :table/provenance nta/provenance
    :table/transcribed? true
-   :table/transcribed-by "tools/import_nta_2026.clj"
+   :table/transcribed-by "tools/import_nta_2026.cljk"
    :table/not-transcribed
    [{:gap/what "日額表"
      :gap/why "同じ publication の別表。月額表から日割りで作らない"}
@@ -447,7 +447,7 @@
                    "withhold は厳密な有理数を返して丸めを拒否する")}]
    :table/why
    (str "月額表の帯・しきい値・超過税率の段は "
-        "tools/import_nta_2026.clj が workbook から読み出したものであり、"
+        "tools/import_nta_2026.cljk が workbook から読み出したものであり、"
         "誰かが打ち込んだものではない。"
         "読めていない表と端数処理は :table/not-transcribed に名前で残る")})
 

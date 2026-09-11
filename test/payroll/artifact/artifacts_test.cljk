@@ -96,7 +96,7 @@
     (is (str/includes? (:sufficiency/why daicho/sufficiency) "第五十四条"))
     (is (str/includes? (daicho/->json []) "\"statutory_form\":false"))
     (testing "and no such list appears anywhere in the namespace"
-      (let [src (slurp "src/payroll/artifact/chingin_daicho.cljc")]
+      (let [src (slurp "src/payroll/artifact/chingin_daicho.cljk")]
         (is (not (str/includes? src "記載事項は次")))
         (is (not (str/includes? src "required-items")))))))
 

@@ -1,6 +1,6 @@
 ;; -*- GENERATED FILE — DO NOT EDIT BY HAND -*-
 ;;
-;; Produced by `clojure -M:importer` (tools/import_nta_2026.clj) from the
+;; Produced by `clojure -M:importer` (tools/import_nta_2026.cljk) from the
 ;; 国税庁 workbook pinned by the SHA-256 in `provenance` below. Every figure
 ;; here was READ out of that workbook; none was typed. To change it, change
 ;; the importer or the pin and regenerate — an edit made here is an edit the
@@ -35,7 +35,7 @@
   `:transform/*` records the run rather than the source, so that a parse
   that read fewer rows than the sheet has is visible in the data instead of
   only in the importer's console output."
-  {:source/url "https://www.nta.go.jp/publication/pamph/gensen/zeigakuhyo2026/data/01-07.xls", :source/page "https://www.nta.go.jp/publication/pamph/gensen/zeigakuhyo2026/01.htm", :source/title "令和8年分 給与所得の源泉徴収税額表（月額表）", :source/authority "国税庁", :source/sha256 "50aafa072df1bb6b6aa253a021f7cc246265c3f2393f9988ee01ad121bc4f310", :source/bytes 81408, :source/retrieved-at "2026-08-26", :source/sheet "月額表", :source/applicability {:applicability/from "2026-01", :applicability/to "2026-12", :applicability/basis "令和8年分。表題行から読み取った適用年であり、importer が仮定した年ではない", :applicability/not-covered "日額表・賞与に対する源泉徴収税額の算出率の表はこの workbook の別表であり、転記していない"}, :transform/importer "tools/import_nta_2026.clj", :transform/version 1, :transform/sheets 1, :transform/rows-read 413, :transform/bands 231, :transform/thresholds 9, :transform/kou-segments 9, :transform/otsu-segments 2})
+  {:source/url "https://www.nta.go.jp/publication/pamph/gensen/zeigakuhyo2026/data/01-07.xls", :source/page "https://www.nta.go.jp/publication/pamph/gensen/zeigakuhyo2026/01.htm", :source/title "令和8年分 給与所得の源泉徴収税額表（月額表）", :source/authority "国税庁", :source/sha256 "50aafa072df1bb6b6aa253a021f7cc246265c3f2393f9988ee01ad121bc4f310", :source/bytes 81408, :source/retrieved-at "2026-08-26", :source/sheet "月額表", :source/applicability {:applicability/from "2026-01", :applicability/to "2026-12", :applicability/basis "令和8年分。表題行から読み取った適用年であり、importer が仮定した年ではない", :applicability/not-covered "日額表・賞与に対する源泉徴収税額の算出率の表はこの workbook の別表であり、転記していない"}, :transform/importer "tools/import_nta_2026.cljk", :transform/version 1, :transform/sheets 1, :transform/rows-read 413, :transform/bands 231, :transform/thresholds 9, :transform/kou-segments 9, :transform/otsu-segments 2})
 
 ;; ---------------------------------------------------------------------------
 ;; 105,000円未満 — the band below the table

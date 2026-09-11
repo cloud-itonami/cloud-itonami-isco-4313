@@ -1,6 +1,6 @@
 (ns import-nta-2026
   "Turn the 国税庁's published 源泉徴収税額表（月額表）workbook into
-  `src/payroll/rates/monthly_2026.cljc`.
+  `src/payroll/rates/monthly_2026.cljk`.
 
   ## Why an importer and not a transcription
 
@@ -68,7 +68,7 @@
    :pin/authority "国税庁"})
 
 (def default-workbook "/tmp/nta2026/01-07.xls")
-(def default-output "src/payroll/rates/monthly_2026.cljc")
+(def default-output "src/payroll/rates/monthly_2026.cljk")
 
 (def ^:private importer-version
   "Bumped when the SHAPE of the generated file changes, so that a consumer
@@ -508,7 +508,7 @@
    (str
    ";; -*- GENERATED FILE — DO NOT EDIT BY HAND -*-\n"
    ";;\n"
-   ";; Produced by `clojure -M:importer` (tools/import_nta_2026.clj) from the\n"
+   ";; Produced by `clojure -M:importer` (tools/import_nta_2026.cljk) from the\n"
    ";; 国税庁 workbook pinned by the SHA-256 in `provenance` below. Every figure\n"
    ";; here was READ out of that workbook; none was typed. To change it, change\n"
    ";; the importer or the pin and regenerate — an edit made here is an edit the\n"
@@ -702,7 +702,7 @@
                     :applicability/not-covered
                     (str "日額表・賞与に対する源泉徴収税額の算出率の表は"
                          "この workbook の別表であり、転記していない"))
-                   :transform/importer "tools/import_nta_2026.clj"
+                   :transform/importer "tools/import_nta_2026.cljk"
                    :transform/version importer-version
                    :transform/sheets sheet-count
                    :transform/rows-read rows-read

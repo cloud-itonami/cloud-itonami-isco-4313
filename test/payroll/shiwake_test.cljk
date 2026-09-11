@@ -100,7 +100,7 @@
   (testing "taxlaw records :taxlaw/amount-checked? false — nothing in this
             fleet certifies how much should have been withheld, and this
             namespace inherits that exactly"
-    (let [src (slurp "src/payroll/shiwake.cljc")]
+    (let [src (slurp "src/payroll/shiwake.cljk")]
       (doseq [tok ["http" "fetch" "slurp" "4311" "js/"]]
         (is (not (re-find (re-pattern (str "\\(" tok)) src))
             (str "must not call out: found " tok)))
