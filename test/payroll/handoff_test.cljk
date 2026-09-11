@@ -334,7 +334,7 @@
             that fetched would make this actor a reader of another actor's
             ledger, and one that appended would decide when to write to its
             own — the caller does both"
-    (let [src (slurp "src/payroll/handoff.cljc")]
+    (let [src (slurp "src/payroll/handoff.cljk")]
       (doseq [tok ["http" "fetch" "slurp" "js/" "swap!" "reset!" "atom"
                    "append-ledger!" "store/" "spit"]]
         (is (not (re-find (re-pattern (str "\\(" (java.util.regex.Pattern/quote tok))) src))
