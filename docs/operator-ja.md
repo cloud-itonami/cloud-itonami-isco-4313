@@ -19,7 +19,7 @@ PAYROLL_ALLOWLIST='did:key:z6Mk…=emp-1' \
 PAYROLL_AUTH=trusted-header \
 PAYROLL_DID_HEADER=X-Verified-DID \
 PAYROLL_PORT=8413 \
-clojure -M -m payroll.host.jvm
+kbb -M -m payroll.host.jvm
 ```
 
 | 変数 | 未設定なら | 何のためか |

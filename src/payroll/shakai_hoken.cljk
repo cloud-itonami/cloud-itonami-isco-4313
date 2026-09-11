@@ -7,7 +7,7 @@
   A Japanese payslip carries four: 健康保険料, 介護保険料, 厚生年金保険料,
   雇用保険料 — and a payroll actor that accounts for one of four and reports
   the run as committed is the shape this repository exists to refuse. It was
-  doing it. `nbb scripts/repo-search.cljs 社会保険` found nothing across 4,205
+  doing it. `kbb --backend sci scripts/repo-search.cljk 社会保険` found nothing across 4,205
   repos on 2026-08-18, so nothing upstream was being ignored either.
 
   Pure, like `payroll.nenmatsu`, `payroll.handoff` and `payroll.shiwake`:

@@ -147,7 +147,7 @@ the refusals, and the response names the ones that are neither `:posted` nor
 has to look at. An unreadable body appends **nothing**: half a batch is less
 trustworthy than none.
 
-Thirteen mutations cover the route (`nbb tools/mutate.cljk`); the table's
+Thirteen mutations cover the route (`kbb --backend sci tools/mutate.cljk`); the table's
 header states that it covers the route and not the actor.
 
 | 4311 answered | fact records |

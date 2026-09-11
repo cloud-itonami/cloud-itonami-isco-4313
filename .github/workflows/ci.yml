@@ -36,4 +36,4 @@ jobs:
         with: { cli: latest }
       - name: test
         working-directory: orgs/cloud-itonami/cloud-itonami-isco-4313
-        run: clojure -M:test
+        run: kbb -M:test

@@ -1,6 +1,6 @@
 ;; -*- GENERATED FILE — DO NOT EDIT BY HAND -*-
 ;;
-;; Produced by `clojure -M:importer` (tools/import_nta_2026.cljk) from the
+;; Produced by `kbb -M:importer` (tools/import_nta_2026.cljk) from the
 ;; 国税庁 workbook pinned by the SHA-256 in `provenance` below. Every figure
 ;; here was READ out of that workbook; none was typed. To change it, change
 ;; the importer or the pin and regenerate — an edit made here is an edit the
