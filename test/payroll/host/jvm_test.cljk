@@ -7,7 +7,7 @@
   matter most here, that a misconfigured deployment refuses to start and that
   what it accepts does not survive it, are only observable from outside the
   process."
-  (:require [clojure.edn :as edn]
+  (:require [kotoba.lang.edn :as edn]
             [kotoba.lang.text :as str]
             [kotoba.test :refer [deftest is testing]]
             [payroll.fixtures :as f]
