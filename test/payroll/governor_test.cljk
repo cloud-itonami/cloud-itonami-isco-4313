@@ -1,6 +1,6 @@
 (ns payroll.governor-test
   (:require [kotoba.lang.text :as str]
-            [clojure.test :refer [deftest is testing]]
+            [kotoba.test :refer [deftest is testing]]
             [kotoba.labor :as labor]
             [payroll.chingin :as chingin]
             [payroll.nenmatsu :as nenmatsu]

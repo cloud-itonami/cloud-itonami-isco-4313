@@ -10,7 +10,7 @@
   withholding law` and `we read it and this run satisfies it` with the same
   body."
   (:require [kotoba.lang.text :as str]
-            [clojure.test :refer [deftest is testing]]
+            [kotoba.test :refer [deftest is testing]]
             [kotoba.labor :as labor]
             [payroll.advisor :as advisor]
             [payroll.edge.endpoints :as edge]

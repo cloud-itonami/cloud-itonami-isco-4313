@@ -1,7 +1,7 @@
 (ns payroll.provenance-test
   (:require [clojure.set :as set]
             [kotoba.lang.text :as str]
-            [clojure.test :refer [deftest is testing]]
+            [kotoba.test :refer [deftest is testing]]
             [payroll.provenance :as prov]))
 
 (deftest a-numberless-provenance-may-not-carry-a-number

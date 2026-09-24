@@ -5,7 +5,7 @@
   things the ledger actor can do with an entry were indistinguishable from
   this side — there was no trace at all, and a handoff with no trace reads
   as a success by having nothing to contradict it."
-  (:require [clojure.test :refer [deftest is testing]]
+  (:require [kotoba.test :refer [deftest is testing]]
             [payroll.handoff :as handoff]
             [payroll.shiwake :as shiwake]
             [payroll.store :as store]))

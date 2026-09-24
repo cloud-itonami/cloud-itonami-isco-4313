@@ -1,6 +1,6 @@
 (ns payroll.shiwake-test
   (:require [kotoba.lang.text]
-            [clojure.test :refer [deftest is testing]]
+            [kotoba.test :refer [deftest is testing]]
             [payroll.shiwake :as shiwake]))
 
 (def ^:private mapping
