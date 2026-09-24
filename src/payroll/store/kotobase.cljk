@@ -82,7 +82,7 @@
   is allowed to write — a single-employer deployment sets it, and a write for
   anybody else is REFUSED rather than filed. Absent, nothing is restricted,
   which is what the shared contract test runs under."
-  (:require [clojure.edn :as edn]
+  (:require [kotoba.lang.edn :as edn]
             [kotoba.lang.text :as str]
             [payroll.digest :as digest]
             [payroll.kotobase.blind-index :as blind]

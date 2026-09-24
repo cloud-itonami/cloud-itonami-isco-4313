@@ -118,7 +118,7 @@
             [payroll.operations :as operations]
             [payroll.store :as store]
             [payroll.handoff :as handoff]
-            #?(:clj [clojure.edn :as edn] :cljs [cljs.reader :as edn])))
+            #?(:clj [kotoba.lang.edn :as edn] :cljs [cljs.reader :as edn])))
 
 ;; ---------------------------------------------------------------------------
 ;; Allow-list

@@ -59,7 +59,7 @@
   nothing."
   (:require [kotoba.labor :as labor]
             [payroll.store :as store]
-            #?(:clj [clojure.edn :as edn] :cljs [cljs.reader :as edn])))
+            #?(:clj [kotoba.lang.edn :as edn] :cljs [cljs.reader :as edn])))
 
 (defprotocol Advisor
   (-advise [advisor store request] "request -> proposal map"))
