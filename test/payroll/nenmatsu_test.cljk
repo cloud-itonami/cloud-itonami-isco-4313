@@ -11,7 +11,7 @@
   not print as one `out of scope`."
   (:require [kotoba.lang.text :as str]
             [kotoba.test :refer [deftest is testing]]
-            [clojure.set]
+            [kotoba.lang.coll]
             [kotoba.taxlaw :as taxlaw]
             [payroll.nenmatsu :as nenmatsu]))
 
@@ -66,7 +66,7 @@
 (deftest the-two-classifications-partition-the-answers
   (testing "an answer in neither set is `answerable? false` — a new answer
             defaults to refused rather than to a pass"
-    (is (empty? (clojure.set/intersection nenmatsu/answers nenmatsu/refusals)))
+    (is (empty? (kotoba.lang.coll/intersection nenmatsu/answers nenmatsu/refusals)))
     (is (= 5 (count nenmatsu/answers)))
     (is (= 4 (count nenmatsu/refusals)))))
 

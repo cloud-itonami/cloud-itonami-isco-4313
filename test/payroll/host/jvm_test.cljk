@@ -7,7 +7,7 @@
   matter most here, that a misconfigured deployment refuses to start and that
   what it accepts does not survive it, are only observable from outside the
   process."
-  (:require [kotoba.lang.edn :as edn]
+  (:require [kotoba.http.form-urlencoded :as form-urlencoded] [kotoba.lang.edn :as edn]
             [kotoba.lang.text :as str]
             [kotoba.test :refer [deftest is testing]]
             [payroll.fixtures :as f]
@@ -277,10 +277,9 @@
         (let [r (send! port "POST" "/console/mf"
                        {:headers form
                         :body (str "period=" f/period "&csv="
-                                   (java.net.URLEncoder/encode
+                                   (form-urlencoded/form-encode
                                     (str "従業員番号,氏名,支給年月,総支給額,差引支給額\n"
-                                         "9001,W," f/period "," f/gross "," f/net)
-                                    "UTF-8"))})]
+                                         "9001,W," f/period "," f/gross "," f/net)))})]
           (is (= 200 (:status r)))
           ;; the fixture contract registered here carries no :mf/employee-number,
           ;; so the row is unmapped — which is the honest outcome and is what
@@ -288,7 +287,7 @@
           (is (str/includes? (:body r) "契約に紐づいていない"))))
 
       (testing "register a 住民税 決定通知書, and land on the redirect"
-        (let [enc #(java.net.URLEncoder/encode (str %) "UTF-8")
+        (let [enc #(form-urlencoded/form-encode (str %))
               n f/resident-tax-notice-as-transcribed
               r (send! port "POST" "/console/juminzei-notice"
                        {:headers form

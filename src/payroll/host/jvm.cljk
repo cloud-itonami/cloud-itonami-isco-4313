@@ -42,7 +42,7 @@
   deployment with data and one without invisible — and the first request
   against an empty store gets `:no-client`, which is the governor's own
   answer and points at the registration that has not happened."
-  (:require [clojure.java.io :as io]
+  (:require [kotoba.bytes :as kbytes] [clojure.java.io :as io]
             [kotoba.lang.text :as str]
             [payroll.edge.console :as console]
             [payroll.edge.endpoints :as api]
@@ -50,7 +50,6 @@
   (:import (com.sun.net.httpserver HttpExchange HttpHandler HttpServer)
            (java.io ByteArrayOutputStream)
            (java.net InetSocketAddress URI)
-           (java.nio.charset StandardCharsets)
            (java.util.concurrent Executors TimeUnit)))
 
 (def ^:private max-body-bytes
@@ -156,10 +155,10 @@
   ^bytes [body]
   (cond
     (nil? body) (byte-array 0)
-    (string? body) (.getBytes ^String body StandardCharsets/UTF_8)
+    (string? body) (kbytes/utf8-bytes ^String body)
     (sequential? body) (byte-array (map #(unchecked-byte (bit-and (int %) 0xFF))
                                         body))
-    :else (.getBytes (str body) StandardCharsets/UTF_8)))
+    :else (kbytes/utf8-bytes (str body))))
 
 (defn- respond!
   [^HttpExchange exchange status content-type body headers]

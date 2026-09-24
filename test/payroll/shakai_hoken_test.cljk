@@ -7,7 +7,7 @@
   this workspace can compute is computed from a rate read out of a statute,
   that the three it cannot are named rather than guessed, and that adding a
   jurisdiction to the catalog cannot widen a pass."
-  (:require [clojure.set]
+  (:require [kotoba.lang.coll]
             [kotoba.lang.text :as str]
             [kotoba.test :refer [deftest is testing]]
             [payroll.shakai-hoken :as hoken]))
@@ -300,7 +300,7 @@
       (is (str/includes? (:source/retrieved-via src) (:law/id src))))))
 
 (deftest the-answer-and-refusal-sets-are-disjoint-and-cover-what-assess-emits
-  (is (empty? (clojure.set/intersection hoken/answers hoken/refusals)))
+  (is (empty? (kotoba.lang.coll/intersection hoken/answers hoken/refusals)))
   (testing "an answer classified as neither is answerable? false, so a new
             answer defaults to refused rather than to a quiet commit"
     (is (not (contains? hoken/answers :something-new)))))
