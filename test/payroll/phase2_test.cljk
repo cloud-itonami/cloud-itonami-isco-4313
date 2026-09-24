@@ -9,7 +9,7 @@
   withholding table is not transcribed, no input produces a year-end amount —
   the test walks a range rather than checking one input, because a refusal
   that only fires for the value somebody typed is not a refusal."
-  (:require [clojure.java.io :as io]
+  (:require [kotoba.bytes :as kbytes] [clojure.java.io :as io]
             [kotoba.lang.text :as str]
             [kotoba.test :refer [deftest is testing]]
             [payroll.artifact.gensen :as gensen]
@@ -39,7 +39,7 @@
             [payroll.store.kotobase :as kotobase]
             [payroll.touroku :as touroku]
             [payroll.warimashi :as warimashi])
-  (:import (java.nio.charset Charset StandardCharsets)))
+  (:import (java.nio.charset Charset)))
 
 ;; ---------------------------------------------------------------------------
 ;; Content addressing — against the published vectors, never against itself
@@ -604,8 +604,7 @@
       (testing "and re-encoding those same bytes as UTF-8 would NOT be 120 per
                 record — the mistake the host is wired against"
         (is (< (* 4 122)
-               (alength (.getBytes ^String (zengin/->fixed-width p)
-                                   StandardCharsets/UTF_8))))))))
+               (alength (kbytes/utf8-bytes ^String (zengin/->fixed-width p)))))))))
 
 (deftest the-download-carries-the-charset-and-a-filename
   (let [d (zengin/download (prepared))]
