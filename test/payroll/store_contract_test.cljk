@@ -28,7 +28,7 @@
   what this actor refused. A backend that returned it out of order would
   produce an audit trail in which the corrected run precedes the held one, and
   nothing in the actor would notice — the graph never reads the ledger back."
-  (:require [clojure.test :refer [deftest is testing]]
+  (:require [kotoba.test :refer [deftest is testing]]
             [kotoba.labor :as labor]
             [payroll.actor :as actor]
             [payroll.juminzei :as juminzei]

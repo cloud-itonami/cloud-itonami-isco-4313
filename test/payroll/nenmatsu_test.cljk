@@ -10,7 +10,7 @@
   check is sound in exactly one direction, and that three different facts do
   not print as one `out of scope`."
   (:require [kotoba.lang.text :as str]
-            [clojure.test :refer [deftest is testing]]
+            [kotoba.test :refer [deftest is testing]]
             [clojure.set]
             [kotoba.taxlaw :as taxlaw]
             [payroll.nenmatsu :as nenmatsu]))

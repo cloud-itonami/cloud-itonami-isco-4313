@@ -8,7 +8,7 @@
 
   Each rule gets a tree that breaks it and a tree that does not, and the
   second assertion is the one that catches a checker made vacuously strict."
-  (:require [clojure.test :refer [deftest is testing]]
+  (:require [kotoba.test :refer [deftest is testing]]
             [payroll.ui.a11y :as a11y]))
 
 (defn- rules-of [tree]

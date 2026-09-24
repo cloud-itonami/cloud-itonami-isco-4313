@@ -9,7 +9,7 @@
   jurisdiction to the catalog cannot widen a pass."
   (:require [clojure.set]
             [kotoba.lang.text :as str]
-            [clojure.test :refer [deftest is testing]]
+            [kotoba.test :refer [deftest is testing]]
             [payroll.shakai-hoken :as hoken]))
 
 (def ^:private insured

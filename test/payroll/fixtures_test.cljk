@@ -11,7 +11,7 @@
   takes, so the rule is enforced by the suite rather than remembered."
   (:require [clojure.java.io :as io]
             [kotoba.lang.text :as str]
-            [clojure.test :refer [deftest is testing]]
+            [kotoba.test :refer [deftest is testing]]
             [payroll.artifact.bank-transfer :as bank]
             [payroll.fixtures :as f]))
 

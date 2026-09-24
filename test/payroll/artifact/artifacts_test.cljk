@@ -2,7 +2,7 @@
   "The five output artifacts: determinism, refusals, and the claims each one
   does not make."
   (:require [kotoba.lang.text :as str]
-            [clojure.test :refer [deftest is testing]]
+            [kotoba.test :refer [deftest is testing]]
             [payroll.artifact.bank-transfer :as bank]
             [payroll.artifact.chingin-daicho :as daicho]
             [payroll.artifact.deduction-summary :as summary]

@@ -11,7 +11,7 @@
   that only fires for the value somebody typed is not a refusal."
   (:require [clojure.java.io :as io]
             [kotoba.lang.text :as str]
-            [clojure.test :refer [deftest is testing]]
+            [kotoba.test :refer [deftest is testing]]
             [payroll.artifact.gensen :as gensen]
             [payroll.artifact.zengin :as zengin]
             [payroll.cutover :as cutover]

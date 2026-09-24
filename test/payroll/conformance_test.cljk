@@ -11,7 +11,7 @@
   but that whatever it decided is internally consistent, across every
   disposition this actor has."
   (:require [kotoba.lang.text]
-            [clojure.test :refer [deftest is testing]]
+            [kotoba.test :refer [deftest is testing]]
             [kotoba.labor :as labor]
             [payroll.nenmatsu :as nenmatsu]
             [payroll.store :as store]

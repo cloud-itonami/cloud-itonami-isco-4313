@@ -1,6 +1,6 @@
 (ns payroll.edge.console-test
   (:require [kotoba.lang.text :as str]
-            [clojure.test :refer [deftest is testing]]
+            [kotoba.test :refer [deftest is testing]]
             [payroll.edge.console :as console]
             [payroll.edge.endpoints :as api]
             [payroll.fixtures :as f]
