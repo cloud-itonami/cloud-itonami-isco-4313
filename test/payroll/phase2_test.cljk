@@ -9,7 +9,7 @@
   withholding table is not transcribed, no input produces a year-end amount —
   the test walks a range rather than checking one input, because a refusal
   that only fires for the value somebody typed is not a refusal."
-  (:require [kotoba.bytes :as kbytes] [clojure.java.io :as io]
+  (:require [kotoba.lang.error :as kerror] [kotoba.bytes :as kbytes] [clojure.java.io :as io]
             [kotoba.lang.text :as str]
             [kotoba.test :refer [deftest is testing]]
             [payroll.artifact.gensen :as gensen]
@@ -112,7 +112,7 @@
         (testing "and a store with a different key REFUSES rather than
                   reporting an empty ledger"
           (let [other (fake/store! t {:envelope (fake/reversible-envelope "k2")})]
-            (is (thrown-with-msg? clojure.lang.ExceptionInfo
+            (is (thrown-with-msg? kerror/ExceptionInfo
                                   #"kotobase read refused"
                                   (store/ledger other)))
             (is (false? (:store/readable? (kotobase/health other))))))))))
@@ -213,12 +213,12 @@
             (is (seq (:chain/broken c)))
             (is (contains? #{:missing :tampered}
                            (:broken/kind (first (:chain/broken c)))))
-            (is (thrown-with-msg? clojure.lang.ExceptionInfo
+            (is (thrown-with-msg? kerror/ExceptionInfo
                                   #"kotobase read refused: ledger"
                                   (store/ledger s2)))
             (testing "and the refusal carries the structured break, never a payload"
               (let [d (try (store/ledger s2) nil
-                           (catch clojure.lang.ExceptionInfo e (ex-data e)))]
+                           (catch kerror/ExceptionInfo e (ex-data e)))]
                 (is (= :ledger (:read/stream d)))
                 (is (seq (:read/broken d)))
                 (is (not (str/includes? (pr-str d) f/employer-id)))))
@@ -241,7 +241,7 @@
             (is (false? (:chain/complete? c)))
             (is (= [:tampered] (mapv :broken/kind (:chain/broken c))))
             (is (str/includes? (:chain/why c) "内容アドレス"))
-            (is (thrown-with-msg? clojure.lang.ExceptionInfo
+            (is (thrown-with-msg? kerror/ExceptionInfo
                                   #"kotobase read refused"
                                   (store/ledger s3)))
             (is (= [:tampered] (:store/break-kinds (kotobase/health s3)))))))
@@ -267,7 +267,7 @@
           (store/append-ledger! s5 {:client-id f/employer-id :n 1})
           (let [victim (ffirst (fake/blocks-of t5 "tenant-test"))]
             (fake/tamper-block! t5 "tenant-test" victim [0 1 2 3]))
-          (is (thrown-with-msg? clojure.lang.ExceptionInfo
+          (is (thrown-with-msg? kerror/ExceptionInfo
                                 #"kotobase append refused"
                                 (store/append-ledger!
                                  s5 {:client-id f/employer-id :n 2}))))))))
@@ -2931,7 +2931,7 @@
                    s {:employer f/employer-id
                       :notice f/resident-tax-notice-as-transcribed}))))
       (is (thrown-with-msg?
-           clojure.lang.ExceptionInfo #"kotobase append refused"
+           kerror/ExceptionInfo #"kotobase append refused"
            (juminzei/register-notice!
             s {:employer "emp-other"
                :notice f/resident-tax-notice-as-transcribed})))

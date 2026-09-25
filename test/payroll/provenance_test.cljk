@@ -1,5 +1,5 @@
 (ns payroll.provenance-test
-  (:require [kotoba.lang.coll :as set]
+  (:require [kotoba.lang.error :as kerror] [kotoba.lang.coll :as set]
             [kotoba.lang.text :as str]
             [kotoba.test :refer [deftest is testing]]
             [payroll.provenance :as prov]))
@@ -9,7 +9,7 @@
             that renders as 1234 in every view that reads :figure/amount and
             carries a provenance nobody looked at"
     (doseq [p prov/numberless]
-      (is (thrown? clojure.lang.ExceptionInfo
+      (is (thrown? kerror/ExceptionInfo
                    (prov/figure {:amount 1234 :provenance p :label "x"}))
           (str p " accepted an amount")))))
 
@@ -21,11 +21,11 @@
                                            :label "x" :why "y"})))))))
 
 (deftest an-unknown-provenance-is-refused
-  (is (thrown? clojure.lang.ExceptionInfo
+  (is (thrown? kerror/ExceptionInfo
                (prov/figure {:amount 1 :provenance :probably-fine :label "x"}))))
 
 (deftest a-non-numeric-amount-is-refused
-  (is (thrown? clojure.lang.ExceptionInfo
+  (is (thrown? kerror/ExceptionInfo
                (prov/figure {:amount "280000" :provenance :declared :label "x"}))))
 
 (deftest only-derived-escapes-the-unverified-mark
