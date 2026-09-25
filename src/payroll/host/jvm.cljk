@@ -42,7 +42,7 @@
   deployment with data and one without invisible — and the first request
   against an empty store gets `:no-client`, which is the governor's own
   answer and points at the registration that has not happened."
-  (:require [kotoba.bytes :as kbytes] [clojure.java.io :as io]
+  (:require [kotoba.bytes :as kbytes] [kotoba.io :as io]
             [kotoba.lang.text :as str]
             [payroll.edge.console :as console]
             [payroll.edge.endpoints :as api]

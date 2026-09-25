@@ -1,5 +1,5 @@
 (ns payroll.artifact.text-test
-  (:require [kotoba.lang.text :as str]
+  (:require [kotoba.lang.error :as kerror] [kotoba.lang.text :as str]
             [kotoba.test :refer [deftest is testing]]
             [payroll.artifact.text :as text]
             [payroll.provenance :as prov]))
@@ -127,9 +127,9 @@
 (deftest json-refuses-a-value-it-cannot-represent
   (testing "##NaN and ##Inf have no JSON representation; an encoder that
             emitted them would produce a file no strict parser reads"
-    (is (thrown? clojure.lang.ExceptionInfo (text/json-value ##NaN)))
-    (is (thrown? clojure.lang.ExceptionInfo (text/json-value ##Inf)))
-    (is (thrown? clojure.lang.ExceptionInfo (text/json-value ##-Inf)))))
+    (is (thrown? kerror/ExceptionInfo (text/json-value ##NaN)))
+    (is (thrown? kerror/ExceptionInfo (text/json-value ##Inf)))
+    (is (thrown? kerror/ExceptionInfo (text/json-value ##-Inf)))))
 
 (deftest the-finiteness-test-answers-through-a-function-parameter
   (testing "the idiomatic `(not= n n)` does NOT — `Util/equiv` short-circuits

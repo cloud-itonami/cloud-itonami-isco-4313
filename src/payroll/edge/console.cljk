@@ -64,7 +64,7 @@
   this console would be refused, and an HTTP client in a test would pass
   because it sends whatever Origin the test gave it (CLAUDE.md records this
   measurement). `payroll.host.config/security-headers` sets `same-origin`."
-  (:require [kotoba.lang.text :as str]
+  (:require [kotoba.http.form-urlencoded :as form-urlencoded] [kotoba.lang.text :as str]
             [payroll.artifact.bank-transfer :as bank]
             [payroll.artifact.chingin-daicho :as daicho]
             [payroll.artifact.deduction-summary :as summary]
@@ -87,7 +87,7 @@
 ;; ---------------------------------------------------------------------------
 
 (defn- decode-component [s]
-  #?(:clj (java.net.URLDecoder/decode ^String s "UTF-8")
+  #?(:clj (form-urlencoded/form-decode ^String s)
      :cljs (js/decodeURIComponent s)))
 
 (defn url-decode
