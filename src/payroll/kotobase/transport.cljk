@@ -17,7 +17,7 @@
 
   kotobase's canonical surfaces are CID-native: an immutable block plane
   addressed by content, and a ref plane whose head moves under a
-  compare-and-set (CLAUDE.md, ADR-2608039000 / ADR-260726). This protocol is
+  compare-and-set (AGENTS.md, ADR-2608039000 / ADR-260726). This protocol is
   those two and nothing else.
 
       put-block!   an immutable block, addressed by the hash of its bytes.

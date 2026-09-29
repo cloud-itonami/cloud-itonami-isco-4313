@@ -182,7 +182,7 @@
   carrying `no-referrer` sends `Origin: null` on its own same-origin form
   POST, so `payroll.edge.console/same-origin?` would refuse every action —
   and an HTTP client in a test would not reproduce it, because a test sends
-  whatever Origin it was told to. CLAUDE.md records this exact measurement
+  whatever Origin it was told to. AGENTS.md records this exact measurement
   from another repository on this fleet."
   {"Content-Security-Policy"
    (str "default-src 'none'; style-src 'unsafe-inline'; form-action 'self'; "

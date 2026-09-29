@@ -15,7 +15,7 @@
   `check` reports `:a11y/scanned` — elements, form controls, tables, headings
   — alongside its findings, and `clean?` is FALSE when nothing was scanned.
 
-  This is the defect CLAUDE.md names as the most common one on this fleet: a
+  This is the defect AGENTS.md names as the most common one on this fleet: a
   check that could not run returning the value of a check that ran and found
   nothing. An accessibility checker handed an empty vector, a nil, or a tree
   it does not understand finds no violations, and `no violations` is exactly

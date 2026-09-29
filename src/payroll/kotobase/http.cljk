@@ -46,7 +46,7 @@
   ## The paths are transcribed, and are NOT verified
 
   kotobase's canonical surfaces are CID-native: an immutable block plane and
-  a ref plane whose head moves under compare-and-set (CLAUDE.md,
+  a ref plane whose head moves under compare-and-set (AGENTS.md,
   ADR-2608039000). `paths` below is this repository's reading of that shape.
   **No request built here has ever been sent**, so every path, every header
   name and every status-code mapping is a transcription that a first

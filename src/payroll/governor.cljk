@@ -1,7 +1,7 @@
 (ns payroll.governor
   "PayrollGovernor — the independent safety/traceability layer for the
   ISCO-08 4313 community payroll actor (itonami actor pattern,
-  ADR-2607011000 / CLAUDE.md Actors section). Modeled on
+  ADR-2607011000 / AGENTS.md Actors section). Modeled on
   cloud-itonami-isco-4311's bookkeeping.governor, with the payroll-
   specific twist that the governor RECOMPUTES wages deterministically
   via `kotoba.labor` — the advisor's arithmetic is never trusted.

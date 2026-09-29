@@ -556,7 +556,7 @@
   preflight — and a 500 tells them nothing about any of them.
 
   What it must NOT do is turn the throw into an empty vector. That is the
-  defect this repository is organised around and CLAUDE.md names as the most
+  defect this repository is organised around and AGENTS.md names as the most
   common one on this fleet: a read that could not run returning the value of
   a read that ran and found nothing. So the answer carries the flag AND the
   reason, and `resident-tax` renders `:unreadable`."

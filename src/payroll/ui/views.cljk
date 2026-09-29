@@ -6,7 +6,7 @@
   `views` is a vector. `nav` renders it, `view-of` dispatches on it, and
   `payroll.ui.views-test` walks it. A view added to the table appears in the
   navigation, gets an accessibility check and gets a route, all without a
-  second edit — which is the property CLAUDE.md's single-page rule is really
+  second edit — which is the property AGENTS.md's single-page rule is really
   about: *a view added to the dispatch and forgotten in the nav is dead code
   that looks live.*
 
