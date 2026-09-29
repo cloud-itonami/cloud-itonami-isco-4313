@@ -10,7 +10,7 @@
 
   So the address has to be a function of the content, and the function has to
   be the one kotobase.net actually accepts: `PUT /ipfs/:cid` takes a **raw
-  CIDv1 over SHA-256** and nothing else (CLAUDE.md records the 400
+  CIDv1 over SHA-256** and nothing else (AGENTS.md records the 400
   `not-raw-sha256` this repository would otherwise earn).
 
   ## Why SHA-256 is written out here rather than taken from a host

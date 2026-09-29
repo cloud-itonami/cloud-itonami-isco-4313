@@ -5,7 +5,7 @@
 
   Everything else in `payroll.ui` and `payroll.artifact` is hiccup in and
   hiccup out. This is where `jp-go-dds` — the workspace's base design system,
-  デジタル庁デザインシステム (CLAUDE.md, owner decision 2026-08-05) — is
+  デジタル庁デザインシステム (AGENTS.md, owner decision 2026-08-05) — is
   required, so the views, the accessibility invariants and the printable
   payslip are all testable without one.
 

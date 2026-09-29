@@ -155,7 +155,7 @@ is deduplicated against.
 
 ### The console is server-rendered and ships no script
 
-CLAUDE.md's single-page rule has an exception (ADR-2608231200) for a page that
+AGENTS.md's single-page rule has an exception (ADR-2608231200) for a page that
 sits next to live credentials, and a payroll operator console is that page. The
 invariants the rule protects are all kept — one shell, one stylesheet, views
 generated from a table, no second app shell that can miss a design-system

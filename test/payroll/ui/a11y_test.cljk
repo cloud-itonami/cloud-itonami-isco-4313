@@ -1,7 +1,7 @@
 (ns payroll.ui.a11y-test
   "Both directions for every rule.
 
-  CLAUDE.md's sixth question — *has this check ever refused for the reason it
+  AGENTS.md's sixth question — *has this check ever refused for the reason it
   names?* — is what this namespace answers. A rule that has only ever been
   green is a rule nobody can act on, and one that is green because it scanned
   nothing is worse than no rule.
@@ -21,7 +21,7 @@
 ;; ---------------------------------------------------------------------------
 
 (deftest an-empty-scan-is-not-a-pass
-  (testing "the defect CLAUDE.md names as the most common one on this fleet:
+  (testing "the defect AGENTS.md names as the most common one on this fleet:
             a check that could not run returning the value of a check that
             ran and found nothing"
     (doseq [nothing [nil [] "" {} 42 [[]]]]

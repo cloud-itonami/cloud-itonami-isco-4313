@@ -88,7 +88,7 @@
          :git/sha "b986669f72276568c97e1fa5b331a5ff3017bf69"}
 
         ;; the workspace's BASE design system — デジタル庁デザインシステム
-        ;; (CLAUDE.md, owner decision 2026-08-05: new UI is built on jp-go-dds,
+        ;; (AGENTS.md, owner decision 2026-08-05: new UI is built on jp-go-dds,
         ;; not on liquid-glass). The operator console is Japanese and is read by
         ;; somebody doing payroll for a real company; a bespoke stylesheet here
         ;; would be a second design language nobody else on this fleet reads.

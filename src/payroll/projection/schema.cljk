@@ -7,7 +7,7 @@
   Kotobase is the transactional source of truth (`payroll.store.kotobase`).
   R2 Data Catalog is a PROJECTION: an Iceberg table an accountant or an
   auditor can query without touching the ledger, and one that could be
-  deleted and rebuilt from the ledger without losing anything. CLAUDE.md's
+  deleted and rebuilt from the ledger without losing anything. AGENTS.md's
   test for the difference is exactly that — *delete it: is data lost, or is
   it only slower* — and every table here answers `only slower`.
 

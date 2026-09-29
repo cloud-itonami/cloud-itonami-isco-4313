@@ -244,7 +244,7 @@
   ;; literal stopped appearing, and the line came out — which left the whole
   ;; `:mf/no-counterpart` rendering branch live and unmeasured.
   ;;
-  ;; Deleting it was the wrong repair for a reason the CLAUDE.md rule about
+  ;; Deleting it was the wrong repair for a reason the AGENTS.md rule about
   ;; evidence floors names exactly: a screen that has no such column and a
   ;; screen that has forgotten how to render one look identical, and the
   ;; second is how a MoneyForward column carrying a real deduction becomes a

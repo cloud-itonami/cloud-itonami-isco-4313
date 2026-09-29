@@ -749,7 +749,7 @@ scanned:
 
 `clean?` is **false** for a zero-element scan. A checker handed a nil finds no
 violations, and no violations is exactly what a passing view looks like —
-which is CLAUDE.md's most-named defect, at the point where it would be
+which is AGENTS.md's most-named defect, at the point where it would be
 invisible. What the checker does **not** decide (contrast, focus visibility,
 whether a label's text means anything) is emitted in its own result rather
 than left implied.

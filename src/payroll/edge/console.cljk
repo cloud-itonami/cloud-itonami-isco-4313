@@ -62,7 +62,7 @@
   ⚠ The host must NOT send `Referrer-Policy: no-referrer`. A page carrying it
   sends `Origin: null` on its OWN same-origin form POST, so every action on
   this console would be refused, and an HTTP client in a test would pass
-  because it sends whatever Origin the test gave it (CLAUDE.md records this
+  because it sends whatever Origin the test gave it (AGENTS.md records this
   measurement). `payroll.host.config/security-headers` sets `same-origin`."
   (:require [kotoba.http.form-urlencoded :as form-urlencoded] [kotoba.lang.text :as str]
             [payroll.artifact.bank-transfer :as bank]
